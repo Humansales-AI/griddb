@@ -1,0 +1,22 @@
+{
+  "name": "griddb",
+  "version": "2.0.0",
+  "description": "Binary Grid Database — A Unified 5-Bit Integer Fabric. Deterministic, language-agnostic data storage with geometric queries.",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "jest",
+    "demo": "ts-node examples/demo.ts"
+  },
+  "keywords": ["database", "binary", "5-bit", "grid", "geometric", "deterministic"],
+  "license": "MIT",
+  "devDependencies": {
+    "@types/jest": "^29.5.0",
+    "@types/node": "^20.0.0",
+    "jest": "^29.5.0",
+    "ts-jest": "^29.1.0",
+    "ts-node": "^10.9.0",
+    "typescript": "^5.0.0"
+  }
+}

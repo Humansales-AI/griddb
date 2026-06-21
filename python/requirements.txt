@@ -1,0 +1,6 @@
+# Binary Grid Database — Python dependencies
+# No external dependencies required for the core engine.
+# Only standard library modules are used.
+#
+# Optional for development/testing:
+# pytest>=7.0.0
