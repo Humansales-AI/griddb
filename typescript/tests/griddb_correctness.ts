@@ -267,7 +267,7 @@ function testSumNBasic(): boolean {
   return ok;
 }
 
-// ── Test 2: Group commit (batched fsync) ──
+// ── Test 2: Group commit (true batched fsync) ──
 function testGroupCommit(): boolean {
   const d = tempDir();
   const grid = new MiniAllocGrid(d);
@@ -275,33 +275,59 @@ function testGroupCommit(): boolean {
   const BATCH = 50;
   let flushes = 0;
 
+  type W = { rid: number; tokens: number[] };
+  const doFlush = (batch: W[]) => {
+    // Keep data file open for entire batch — no intermediate opens
+    const dfd = fs.openSync(grid['dataPath'], 'r+');
+    const afd = fs.openSync(grid['allocPath'], 'r+');
+
+    for (const w of batch) {
+      const [packed, _] = packTokensToBytes(w.tokens);
+      const bitLen = w.tokens.length * 5;
+      const off = grid['dataEnd'];
+      grid['dataEnd'] += packed.length;
+
+      // Write data (no fsync yet)
+      fs.writeSync(dfd, packed, 0, packed.length, off);
+
+      // Write alloc entry (no fsync yet)
+      const ao = 8 + w.rid * ALLOC_ENTRY_SIZE;
+      const ab = Buffer.alloc(ALLOC_ENTRY_SIZE);
+      ab.writeBigUInt64BE(BigInt(off), 0);
+      ab.writeUInt32BE(bitLen, 8);
+      ab.writeUInt32BE(1, 12); // allocated
+      const needed = ao + ALLOC_ENTRY_SIZE;
+      if (fs.fstatSync(afd).size < needed) {
+        fs.writeSync(afd, Buffer.alloc(1), 0, 1, needed - 1);
+      }
+      fs.writeSync(afd, ab, 0, ALLOC_ENTRY_SIZE, ao);
+    }
+
+    // Update data header once
+    const dh = Buffer.alloc(8);
+    dh.writeBigUInt64BE(BigInt(grid['dataEnd']), 0);
+    fs.writeSync(dfd, dh, 0, 8, 4);
+
+    // ONE fsync per file
+    fs.fsyncSync(dfd); fs.closeSync(dfd);
+    fs.fsyncSync(afd); fs.closeSync(afd);
+    flushes++;
+  };
+
   const t0 = Date.now();
-  const buffer: { rid: number; tokens: number[] }[] = [];
+  const buffer: W[] = [];
   for (let i = 0; i < N; i++) {
     buffer.push({ rid: i, tokens: [...encodeInt(i), T.RECORD] });
-    if (buffer.length >= BATCH) {
-      // Write all in batch without intermediate fsyncs
-      for (const w of buffer) (grid as any)._writeDataNoFsync(w.rid, w.tokens);
-      // Single fsync for the entire batch
-      const dfd = fs.openSync(grid['dataPath'], 'r+');
-      fs.fsyncSync(dfd); fs.closeSync(dfd);
-      flushes++;
-      buffer.length = 0;
-    }
+    if (buffer.length >= BATCH) { doFlush(buffer); buffer.length = 0; }
   }
-  if (buffer.length > 0) {
-    for (const w of buffer) (grid as any)._writeDataNoFsync(w.rid, w.tokens);
-    const dfd = fs.openSync(grid['dataPath'], 'r+');
-    fs.fsyncSync(dfd); fs.closeSync(dfd);
-    flushes++;
-  }
+  if (buffer.length > 0) doFlush(buffer);
   const elapsed = Date.now() - t0;
 
   let count = 0;
   for (let i = 0; i < N; i++) { if (grid.read(i)) count++; }
   const ok = count === N;
   const wps = Math.round(N / (elapsed / 1000));
-  process.stdout.write(`  Group commit (N=${N}, batch=${BATCH}): ${count}/${N}, ${flushes} fsyncs, ${elapsed}ms ${ok ? '✓' : '✗'} (~${wps} writes/s)\n`);
+  process.stdout.write(`  Group commit (N=${N}, batch=${BATCH}): ${count}/${N}, ${flushes} flushes, ${elapsed}ms ${ok ? '✓' : '✗'} (~${wps} writes/s)\n`);
   grid.close();
   fs.rmSync(d, { recursive: true, force: true });
   return ok;
