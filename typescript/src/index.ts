@@ -75,7 +75,7 @@ export type { AllocEntry, AllocRecord } from './alloc';
 export { PositionedGrid } from './positioned';
 export type { PositionedRecord } from './positioned';
 
-export { HashIndex, BTreeIndex } from './indexes';
+export { HashIndex, BTreeIndex } from './secondary';
 
 export { ReplicationMaster, Replica } from './replication';
 
