@@ -5,3 +5,4 @@ node_modules/
 dist/
 .next/
 .env.local
+griddb-v4.grid
