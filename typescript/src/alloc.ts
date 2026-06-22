@@ -263,6 +263,7 @@ export class WALedAllocGrid {
   read(recordId: number) { return this.grid.read(recordId); }
   delete(recordId: number) { return this.grid.delete(recordId); }
   get totalEntries() { return this.grid.totalEntries; }
+  get fileSize() { return this.grid.allocFileSize + this.grid.dataFileSize; }
 
   private _replay(): void {
     const data = fs.readFileSync(this.walPath);
