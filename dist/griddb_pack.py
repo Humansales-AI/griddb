@@ -1,165 +1,126 @@
 #!/usr/bin/env python3
 """
-GridDB Self-Distributing Archive
-=================================
-One file: griddb-v4.grid
-Contains the entire GridDB library as GridDB records.
+GridDB Self-Contained Unpacker — zero dependencies, standalone
+===============================================================
+Unpacks griddb-v4.grid. No GridDB installation needed. Just Python 3.
 
-Pack:   python3 griddb_pack.py pack   → griddb-v4.grid
-Unpack: python3 griddb_pack.py unpack → writes all files
-
-Uses GridDB's own alloc+data format to store itself.
+Usage: python3 griddb_pack.py unpack griddb-v4.grid ./output/
 """
 import os, sys, struct
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from binary_grid_db import Token, Encoder, Parser, ParsedNumber, ParsedWord
-from griddb_alloc import AllocGrid
+# ═══════════════════════════════════════════════════════════════════════
+# Minimal inline 5-bit decoder — no imports needed
+# ═══════════════════════════════════════════════════════════════════════
 
-COMPONENTS = [
-    'griddb_pack.py',          # ← the unpacker itself
-    'binary_grid_db.py',
-    'griddb_alloc.py',
-    'griddb_wal.py',
-    'griddb_positioned.py',
-    'griddb_index.py',
-    'griddb_transactions.py',
-    'griddb_replication.py',
-    'griddb_changestream.py',
-    'griddb_correctness.py',
-    'test_binary_grid_db.py',
-]
+T_END, T_RECORD, T_START = 30, 28, 31
+WORD_CH = ['A','B','C','D','E','F','G','H','I','J','K','L','M','N','O','P',
+           'Q','R','S','T','U','V','W','X','Y','Z',' ','.']
+SP_CH   = ['a','b','c','d','e','f','g','h','i','j','k','l','m','n','o','p',
+           'q','r','s','t','u','v','w','x','y','z','@','-']
 
-OUTPUT_FILE = 'griddb-v4.grid'
+def _unpack(data, pad, n):
+    bits = []; [bits.extend([(b>>i)&1 for i in range(7,-1,-1)]) for b in data]
+    bits = bits[:len(bits)-pad]
+    return [sum(bits[i+j]<<(4-j) for j in range(5)) for i in range(0,len(bits)-4,5)][:n]
 
-def pack(directory: str, output: str = OUTPUT_FILE):
-    """Pack all component files into a single GridDB archive."""
-    grid = AllocGrid(data_dir=os.path.join(directory, '_pack_tmp'))
-    rid = 0
+def _parse_val(tokens, i):
+    digs, j = [], i
+    while j < len(tokens):
+        t = tokens[j]
+        if 0 <= t <= 9: digs.append(t)
+        elif 17 <= t <= 25: digs.append(-(t-16))
+        else: break
+        j += 1
+    if not digs: return 0, i
+    v, n = 0, len(digs)
+    for k, d in enumerate(digs): v += d * (10**(n-1-k))
+    return v, j + (1 if j < len(tokens) and tokens[j] == T_END else 0)
 
-    print(f"Packing {len(COMPONENTS)} files → {output}")
-    for filename in COMPONENTS:
-        filepath = os.path.join(directory, filename)
-        if not os.path.exists(filepath):
-            print(f"  SKIP: {filename} (not found)")
-            continue
+def _parse_words(tokens):
+    words, cur, st = [], [], 'N'
+    for t in tokens:
+        if t == T_START:
+            if st == 'N': st = 'W'
+            elif st == 'W': words.append(''.join(cur)); cur = []; st = 'S'
+        elif t == T_END:
+            if cur: words.append(''.join(cur)); cur = []
+            st = 'W' if st == 'S' else 'N'
+        elif t == T_RECORD:
+            if cur: words.append(''.join(cur)); break
+        elif st == 'W' and 0 <= t <= 27: cur.append(WORD_CH[t])
+        elif st == 'S' and 0 <= t <= 27: cur.append(SP_CH[t])
+        elif 0 <= t <= 9 or 17 <= t <= 25: pass  # digit in word = metadata
+    if cur: words.append(''.join(cur))
+    return words
 
-        with open(filepath, 'rb') as f:
-            content = f.read()
+def _all_nums(tokens):
+    nums, i = [], 0
+    while i < len(tokens):
+        t = tokens[i]
+        if 0 <= t <= 9 or 17 <= t <= 25:
+            v, ni = _parse_val(tokens, i); nums.append(v); i = ni
+        else: i += 1
+    return nums
 
-        # Record: WORD(filename) NUM(file_size) RECORD
-        safe_name = filename.replace('_', '-').lower()
-        name_tokens = [*Encoder.encode_word(safe_name), *Encoder.encode_integer(len(content)), Token.RECORD]
-        grid.write(rid, name_tokens)
-        rid += 1
+# ═══════════════════════════════════════════════════════════════════════
 
-        # Store content: each byte as a NUM token
-        # Packed as: NUM(b0) NUM(b1) ... NUM(bN) RECORD
-        content_tokens = []
-        for b in content:
-            content_tokens.extend(Encoder.encode_integer(b))
-        content_tokens.append(Token.RECORD)
-        grid.write(rid, content_tokens)
-        rid += 1
-
-        print(f"  {filename}: {len(content)} bytes, {len(content_tokens)} tokens")
-
-    # Copy alloc+data files to output location
-    tmp_dir = os.path.join(directory, '_pack_tmp')
-    alloc_src = os.path.join(tmp_dir, 'alloc.grid')
-    data_src = os.path.join(tmp_dir, 'data.grid')
-
-    # Merge into one file: [header] [alloc] [data]
-    with open(output, 'wb') as out:
-        # Header: magic + version + file_count + alloc_size
-        with open(alloc_src, 'rb') as af:
-            alloc_data = af.read()
-        with open(data_src, 'rb') as df:
-            data_data = df.read()
-        out.write(struct.pack('>4sIII', b'GRDB', 4, rid, len(alloc_data)))
-        out.write(alloc_data)
-        out.write(data_data)
-
-    # Cleanup
-    import shutil
-    shutil.rmtree(tmp_dir, ignore_errors=True)
-    size = os.path.getsize(output)
-    print(f"  Done: {output} ({size:,} bytes)")
-
-
-def unpack(archive: str, output_dir: str):
-    """Unpack a GridDB archive into component files."""
-    if not os.path.exists(archive):
-        print(f"Archive not found: {archive}")
-        return
-
-    os.makedirs(output_dir, exist_ok=True)
-
+def unpack(archive, out_dir):
+    os.makedirs(out_dir, exist_ok=True)
     with open(archive, 'rb') as f:
-        magic, version, file_count, alloc_size = struct.unpack('>4sIII', f.read(16))
-        if magic != b'GRDB':
-            print(f"Invalid archive: {magic}")
-            return
+        magic, ver, fc, asz = struct.unpack('>4sIII', f.read(16))
+        if magic != b'GRDB': print("Invalid archive"); return
+        rest = f.read()
+    alloc, data = rest[:asz], rest[asz:]
+    DS = 12  # data file header size
+    print(f"GridDB v{ver}, {fc} records")
 
-        print(f"GridDB archive v{version}, {file_count} records, alloc={alloc_size}B")
+    for rid in range(0, fc, 2):
+        # Name record
+        ae = 8 + rid * 16
+        if ae + 16 > len(alloc): break
+        off = int.from_bytes(alloc[ae:ae+8], 'big')
+        bl = struct.unpack('>I', alloc[ae+8:ae+12])[0]
+        fl = struct.unpack('>I', alloc[ae+12:ae+16])[0]
+        if fl == 0: continue
+        raw = data[off-DS : off-DS + (bl+7)//8]
+        exp = bl // 5
+        tok = None
+        for p in range(8):
+            try:
+                t = _unpack(raw, p, exp)
+                if len(t) == exp: tok = t; break
+            except: pass
+        if not tok: continue
+        words = _parse_words(tok)
+        nums = _all_nums(tok)
+        fname = ''.join(words).replace('-', '_')
+        fsize = nums[-1] if nums else 0
 
-        remaining = f.read()
+        # Content record
+        ae2 = 8 + (rid+1) * 16
+        if ae2 + 16 > len(alloc): break
+        off2 = int.from_bytes(alloc[ae2:ae2+8], 'big')
+        bl2 = struct.unpack('>I', alloc[ae2+8:ae2+12])[0]
+        fl2 = struct.unpack('>I', alloc[ae2+12:ae2+16])[0]
+        if fl2 == 0: continue
+        raw2 = data[off2-DS : off2-DS + (bl2+7)//8]
+        exp2 = bl2 // 5
+        tok2 = None
+        for p in range(8):
+            try:
+                t = _unpack(raw2, p, exp2)
+                if len(t) == exp2: tok2 = t; break
+            except: pass
+        if not tok2: continue
+        content = bytes(b for b in _all_nums(tok2) if 0 <= b <= 255)
 
-    alloc_dir = os.path.join(output_dir, '_unpack_tmp')
-    os.makedirs(alloc_dir, exist_ok=True)
-    alloc_path = os.path.join(alloc_dir, 'alloc.grid')
-    data_path = os.path.join(alloc_dir, 'data.grid')
-
-    alloc_bytes = remaining[:alloc_size]
-    data_bytes = remaining[alloc_size:]
-
-    with open(alloc_path, 'wb') as f:
-        f.write(alloc_bytes)
-    with open(data_path, 'wb') as f:
-        f.write(data_bytes)
-
-    # Read via AllocGrid
-    grid = AllocGrid(data_dir=alloc_dir)
-    extracted = 0
-    for rid in range(0, file_count, 2):
-        name_rec = grid.read(rid)
-        content_rec = grid.read(rid + 1)
-        if not name_rec or not content_rec:
-            continue
-
-        # Parse filename
-        words = [p.text for p in name_rec.parsed if isinstance(p, ParsedWord)]
-        nums  = [p.value for p in name_rec.parsed if isinstance(p, ParsedNumber)]
-        filename = ''.join(words).replace('-', '_')
-        file_size = nums[-1] if nums else 0
-
-        # Parse content: each NUM token is a byte
-        content_nums = [p.value for p in content_rec.parsed if isinstance(p, ParsedNumber)]
-        content_bytes = bytes(content_nums)
-
-        filepath = os.path.join(output_dir, filename)
-        with open(filepath, 'wb') as f:
-            f.write(content_bytes)
-        print(f"  {filename}: {len(content_bytes)} bytes")
-        extracted += 1
-
-    import shutil
-    shutil.rmtree(alloc_dir, ignore_errors=True)
-    print(f"  Done: {extracted} files → {output_dir}/")
-
+        with open(os.path.join(out_dir, fname), 'wb') as f:
+            f.write(content)
+        print(f"  {fname}: {len(content)} bytes")
+    print(f"  Done → {out_dir}/")
 
 if __name__ == '__main__':
-    if len(sys.argv) < 2:
-        print("Usage: python3 griddb_pack.py pack|unpack [directory]")
+    if len(sys.argv) < 3:
+        print("Usage: python3 griddb_pack.py unpack <archive> [outdir]")
         sys.exit(1)
-
-    cmd = sys.argv[1]
-    cwd = sys.argv[2] if len(sys.argv) > 2 else os.path.dirname(os.path.abspath(__file__))
-
-    if cmd == 'pack':
-        pack(cwd)
-    elif cmd == 'unpack':
-        unpack(os.path.join(cwd, OUTPUT_FILE) if os.path.isdir(cwd) else cwd,
-               sys.argv[3] if len(sys.argv) > 3 else './unpacked')
-    else:
-        print(f"Unknown command: {cmd}")
+    unpack(sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else './griddb')

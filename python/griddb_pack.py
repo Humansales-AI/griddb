@@ -17,6 +17,7 @@ from binary_grid_db import Token, Encoder, Parser, ParsedNumber, ParsedWord
 from griddb_alloc import AllocGrid
 
 COMPONENTS = [
+    'griddb_pack.py',          # ← the unpacker itself
     'binary_grid_db.py',
     'griddb_alloc.py',
     'griddb_wal.py',
