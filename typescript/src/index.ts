@@ -71,3 +71,15 @@ export {
 
 export { AllocGrid, GroupCommitAllocGrid, WALedAllocGrid } from './alloc';
 export type { AllocEntry, AllocRecord } from './alloc';
+
+export { PositionedGrid } from './positioned';
+export type { PositionedRecord } from './positioned';
+
+export { HashIndex, BTreeIndex } from './indexes';
+
+export { ReplicationMaster, Replica } from './replication';
+
+export { Transaction, TransactionalGrid } from './transactions';
+
+export { ChangeStream } from './changestream';
+export type { ChangeEvent } from './changestream';
