@@ -267,62 +267,71 @@ function testSumNBasic(): boolean {
   return ok;
 }
 
-// ── Test 2: Group commit (true batched fsync) ──
+// ── Test 2: Group commit (in-memory buffer, one disk flush) ──
 function testGroupCommit(): boolean {
   const d = tempDir();
-  const grid = new MiniAllocGrid(d);
   const N = 500;
   const BATCH = 50;
   let flushes = 0;
 
+  // Buffer writes in memory first (same as Python's GroupCommitWAL)
   type W = { rid: number; tokens: number[] };
-  const doFlush = (batch: W[]) => {
-    // Keep data file open for entire batch — no intermediate opens
-    const dfd = fs.openSync(grid['dataPath'], 'r+');
-    const afd = fs.openSync(grid['allocPath'], 'r+');
-
-    for (const w of batch) {
-      const [packed, _] = packTokensToBytes(w.tokens);
-      const bitLen = w.tokens.length * 5;
-      const off = grid['dataEnd'];
-      grid['dataEnd'] += packed.length;
-
-      // Write data (no fsync yet)
-      fs.writeSync(dfd, packed, 0, packed.length, off);
-
-      // Write alloc entry (no fsync yet)
-      const ao = 8 + w.rid * ALLOC_ENTRY_SIZE;
-      const ab = Buffer.alloc(ALLOC_ENTRY_SIZE);
-      ab.writeBigUInt64BE(BigInt(off), 0);
-      ab.writeUInt32BE(bitLen, 8);
-      ab.writeUInt32BE(1, 12); // allocated
-      const needed = ao + ALLOC_ENTRY_SIZE;
-      if (fs.fstatSync(afd).size < needed) {
-        fs.writeSync(afd, Buffer.alloc(1), 0, 1, needed - 1);
-      }
-      fs.writeSync(afd, ab, 0, ALLOC_ENTRY_SIZE, ao);
-    }
-
-    // Update data header once
-    const dh = Buffer.alloc(8);
-    dh.writeBigUInt64BE(BigInt(grid['dataEnd']), 0);
-    fs.writeSync(dfd, dh, 0, 8, 4);
-
-    // ONE fsync per file
-    fs.fsyncSync(dfd); fs.closeSync(dfd);
-    fs.fsyncSync(afd); fs.closeSync(afd);
-    flushes++;
-  };
+  const memBuffer: W[] = [];
 
   const t0 = Date.now();
-  const buffer: W[] = [];
   for (let i = 0; i < N; i++) {
-    buffer.push({ rid: i, tokens: [...encodeInt(i), T.RECORD] });
-    if (buffer.length >= BATCH) { doFlush(buffer); buffer.length = 0; }
+    memBuffer.push({ rid: i, tokens: [...encodeInt(i), T.RECORD] });
+    if (memBuffer.length >= BATCH) {
+      // Write entire batch: one open, one fsync, one close
+      const grid = new MiniAllocGrid(d);
+      const dfd = fs.openSync(grid['dataPath'], 'r+');
+      const afd = fs.openSync(grid['allocPath'], 'r+');
+      for (const w of memBuffer) {
+        const [packed, _] = packTokensToBytes(w.tokens);
+        const off = grid['dataEnd'];
+        grid['dataEnd'] += packed.length;
+        fs.writeSync(dfd, packed, 0, packed.length, off);
+        const ao = 8 + w.rid * ALLOC_ENTRY_SIZE;
+        const ab = Buffer.alloc(ALLOC_ENTRY_SIZE);
+        ab.writeBigUInt64BE(BigInt(off), 0); ab.writeUInt32BE(w.tokens.length * 5, 8); ab.writeUInt32BE(1, 12);
+        const needed = ao + ALLOC_ENTRY_SIZE;
+        if (fs.fstatSync(afd).size < needed) fs.writeSync(afd, Buffer.alloc(1), 0, 1, needed - 1);
+        fs.writeSync(afd, ab, 0, ALLOC_ENTRY_SIZE, ao);
+      }
+      const dh = Buffer.alloc(8); dh.writeBigUInt64BE(BigInt(grid['dataEnd']), 0);
+      fs.writeSync(dfd, dh, 0, 8, 4);
+      fs.fsyncSync(dfd); fs.fsyncSync(afd);
+      fs.closeSync(dfd); fs.closeSync(afd);
+      grid.close();
+      flushes++;
+      memBuffer.length = 0;
+    }
   }
-  if (buffer.length > 0) doFlush(buffer);
+  if (memBuffer.length > 0) {
+    const grid = new MiniAllocGrid(d);
+    const dfd = fs.openSync(grid['dataPath'], 'r+');
+    const afd = fs.openSync(grid['allocPath'], 'r+');
+    for (const w of memBuffer) {
+      const [packed, _] = packTokensToBytes(w.tokens);
+      const off = grid['dataEnd']; grid['dataEnd'] += packed.length;
+      fs.writeSync(dfd, packed, 0, packed.length, off);
+      const ao = 8 + w.rid * ALLOC_ENTRY_SIZE;
+      const ab = Buffer.alloc(ALLOC_ENTRY_SIZE);
+      ab.writeBigUInt64BE(BigInt(off), 0); ab.writeUInt32BE(w.tokens.length * 5, 8); ab.writeUInt32BE(1, 12);
+      const needed = ao + ALLOC_ENTRY_SIZE;
+      if (fs.fstatSync(afd).size < needed) fs.writeSync(afd, Buffer.alloc(1), 0, 1, needed - 1);
+      fs.writeSync(afd, ab, 0, ALLOC_ENTRY_SIZE, ao);
+    }
+    const dh = Buffer.alloc(8); dh.writeBigUInt64BE(BigInt(grid['dataEnd']), 0);
+    fs.writeSync(dfd, dh, 0, 8, 4);
+    fs.fsyncSync(dfd); fs.fsyncSync(afd);
+    fs.closeSync(dfd); fs.closeSync(afd);
+    grid.close();
+    flushes++;
+  }
   const elapsed = Date.now() - t0;
 
+  const grid = new MiniAllocGrid(d);
   let count = 0;
   for (let i = 0; i < N; i++) { if (grid.read(i)) count++; }
   const ok = count === N;
