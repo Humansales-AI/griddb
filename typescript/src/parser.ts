@@ -115,4 +115,25 @@ export class Parser {
     else if (this.state === ParserState.SPECIAL) this.finalizeSpecial();
     else if (this.state === ParserState.SPECIAL2) this.finalizeSpecial2();
   }
+
+  /** Reassemble fragmented words: merge consecutive WORD tokens, drop empties. */
+  reassemble(): void {
+    const merged: ParsedToken[] = [];
+    let pending = '';
+    for (const p of this.output) {
+      if (p.type === 'word') {
+        pending += (p as ParsedWord).text;
+      } else {
+        if (pending.length > 0) {
+          merged.push({ type: 'word', characters: pending.split(''), text: pending });
+          pending = '';
+        }
+        merged.push(p);
+      }
+    }
+    if (pending.length > 0) {
+      merged.push({ type: 'word', characters: pending.split(''), text: pending });
+    }
+    this.output = merged;
+  }
 }

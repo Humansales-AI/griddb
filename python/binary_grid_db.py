@@ -664,6 +664,22 @@ class Parser:
         elif self.state == ParserState.SPECIAL2:
             self._finalize_special2()
 
+    def reassemble(self):
+        """Reassemble fragmented words: merge consecutive WORD tokens, drop empties."""
+        merged = []
+        pending = ''
+        for p in self.output:
+            if isinstance(p, ParsedWord):
+                pending += p.text
+            else:
+                if pending:
+                    merged.append(ParsedWord(characters=list(pending), text=pending))
+                    pending = ''
+                merged.append(p)
+        if pending:
+            merged.append(ParsedWord(characters=list(pending), text=pending))
+        self.output = merged
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # 5. CHECKSUM — Modulo-32 integrity
