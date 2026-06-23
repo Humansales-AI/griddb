@@ -44,8 +44,9 @@ FLAG_ALLOCATED = 1
 FLAG_TOMBSTONE = 2
 
 # Data region
-DATA_HEADER_SIZE = 8                # [data_end_offset: uint64]
-DATA_HEADER_FMT  = ">Q"
+DATA_MAGIC = 0x44415441            # "DATA"
+DATA_HEADER_SIZE = 12               # [magic: uint32][data_end_offset: uint64]
+DATA_HEADER_FMT  = ">IQ"
 
 
 @dataclass
@@ -126,7 +127,7 @@ class AllocGrid:
             with open(self.data_path, 'rb') as f:
                 end_bytes = f.read(DATA_HEADER_SIZE)
                 if len(end_bytes) == DATA_HEADER_SIZE:
-                    self._data_end = struct.unpack(DATA_HEADER_FMT, end_bytes)[0]
+                    _, self._data_end = struct.unpack(DATA_HEADER_FMT, end_bytes)
         else:
             self._create_data()
 
@@ -137,7 +138,7 @@ class AllocGrid:
 
     def _create_data(self):
         with open(self.data_path, 'wb') as f:
-            f.write(struct.pack(DATA_HEADER_FMT, DATA_HEADER_SIZE))
+            f.write(struct.pack(DATA_HEADER_FMT, DATA_MAGIC, DATA_HEADER_SIZE))
             f.flush(); os.fsync(f.fileno())
         self._data_end = DATA_HEADER_SIZE
 
@@ -218,7 +219,7 @@ class AllocGrid:
             with open(self.data_path, 'rb') as f:
                 hdr = f.read(DATA_HEADER_SIZE)
                 if len(hdr) == DATA_HEADER_SIZE:
-                    self._data_end = struct.unpack(DATA_HEADER_FMT, hdr)[0]
+                    _, self._data_end = struct.unpack(DATA_HEADER_FMT, hdr)
             data_offset = self._data_end
             with open(self.data_path, 'r+b') as f:
                 f.seek(data_offset)
@@ -230,7 +231,7 @@ class AllocGrid:
             self._data_end = data_offset + len(packed_bytes)
             with open(self.data_path, 'r+b') as f:
                 f.seek(0)
-                f.write(struct.pack(DATA_HEADER_FMT, self._data_end))
+                f.write(struct.pack(DATA_HEADER_FMT, DATA_MAGIC, self._data_end))
                 f.flush()
                 os.fsync(f.fileno())
 
