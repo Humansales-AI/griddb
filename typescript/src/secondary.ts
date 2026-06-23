@@ -208,7 +208,9 @@ export class BTreeIndex {
       }
       let ci = 0;
       for (let i = 0; i < cur.keys.length; i++) { if (key >= cur.keys[i]) ci = i + 1; }
-      cur = this._readNode(cur.children[ci]);
+      const next = this._readNode(cur.children[ci]);
+      if (!next) break;
+      cur = next;
     }
     return false;
   }
