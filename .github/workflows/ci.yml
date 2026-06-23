@@ -1,0 +1,31 @@
+name: CI
+
+on: [push, pull_request]
+
+jobs:
+  conformance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.11' }
+
+      - uses: actions/setup-node@v4
+        with: { node-version: '22' }
+
+      - name: Python tests
+        run: |
+          cd python
+          python3 -m unittest test_binary_grid_db -v
+
+      - name: TypeScript type-check
+        run: |
+          cd typescript
+          npm install
+          npx tsc --noEmit
+
+      - name: Conformance (Python ≡ TypeScript)
+        run: |
+          chmod +x conformance.sh
+          ./conformance.sh

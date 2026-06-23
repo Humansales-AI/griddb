@@ -38,7 +38,6 @@ export class Parser {
     this.output.push({ type: 'number', digits, value: Number.isSafeInteger(asNum) ? asNum : value } as any);
     this.accumulator = [];
   }
-  }
 
   private finalizeWord(): void {
     const chars = this.accumulator.map(t => WORD_CHAR.get(t as Token) ?? '');
