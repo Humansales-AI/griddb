@@ -101,7 +101,7 @@ export type ParsedToken =
 
 // ── Record ──────────────────────────────────────────────────────────────────
 
-export interface Record {
+export interface ParsedRecord {
   tokens: ParsedToken[];
   bitOffset: number;
 }

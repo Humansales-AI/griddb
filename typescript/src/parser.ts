@@ -9,7 +9,7 @@
 
 import {
   Token, ParserState, ParsedToken, ParsedNumber, ParsedWord,
-  ParsedOperator, ChecksumResult, Record,
+  ParsedOperator, ChecksumResult, ParsedRecord,
 } from './types';
 import {
   NUMERIC_DIGIT_VALUE, WORD_CHAR, OPERATOR_SYMBOL,
@@ -20,7 +20,7 @@ export class Parser {
   state: ParserState = ParserState.NUM;
   accumulator: number[] = [];
   output: ParsedToken[] = [];
-  records: Record[] = [];
+  records: ParsedRecord[] = [];
   currentRecordStart: number = 0;
   tokenCount: number = 0;
 
@@ -64,7 +64,7 @@ export class Parser {
   /** Emit a RECORD boundary, grouping tokens since the last RECORD. */
   private emitRecord(): void {
     const recordTokens = this.output.slice(this.currentRecordStart);
-    const record: Record = {
+    const record: ParsedRecord = {
       tokens: [...recordTokens],
       bitOffset: this.currentRecordStart * 5,
     };

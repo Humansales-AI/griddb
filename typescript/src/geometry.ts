@@ -10,7 +10,7 @@
  *   "SELECT * FROM table WHERE foreign_key = X"
  */
 
-import { GridRecord } from './types';
+import { Token, GridRecord } from './types';
 import { BinaryGrid } from './grid';
 
 // ── Hamming Distance ──────────────────────────────────────────────────────
