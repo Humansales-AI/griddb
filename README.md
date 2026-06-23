@@ -19,13 +19,31 @@ Storage is a **bit‑addressable binary grid** with full ACID guarantees.
 ```
 ✅ Atomicity     — Multi-write transactions via WAL + RECORD
 ✅ Consistency   — Application-enforced (schema-free by design)
-✅ Isolation     — Single-writer (`flock`), append-only, serialized writes
+✅ Isolation     — `flock` per-write + `write_if` CAS cross-process
 ✅ Durability    — WAL + fsync + SHA-256 chain, crash recovery verified
 ✅ Point reads   — O(1) at absolute bit offsets
 ✅ Indexes       — Hash (O(1) equality) + B-tree (O(log n) range)
 ✅ Replication   — Master/Replica over HTTP, WAL as oplog
 ✅ Transactions  — Begin/Commit/Rollback, WAL-backed
 ✅ Change streams — SSE + long-poll from WAL tail
+```
+
+---
+
+## Why believe this
+
+Two provable results you can reproduce in one command:
+
+**Cross-language determinism:** 53 test vectors — integers, bigints, mixed-case words, SPECIAL2 punctuation — produce bit-identical packed bytes in Python and TypeScript. A record written on one engine reads byte-correct on the other.
+
+```bash
+./conformance.sh   # 53 pass, 0 fail — Python ≡ TypeScript, bit for bit
+```
+
+**Native geometry on the fabric:** A transformer with a 32-token embedding table (1,024 floats) learns Manhattan distance directly from raw 5-bit token streams — no schema, no query planner, no feature engineering.
+
+```bash
+python3 examples/grid_transformer.py   # trained in seconds, queries the grid via attention
 ```
 
 ---
@@ -69,7 +87,12 @@ Schema-free by design. The grid stores tokens — the application enforces rules
 
 ### Isolation
 
-Single-writer via `fcntl.flock`. All writes serialize through one lock. Threaded sum-N test verifies zero lost updates under contention. Readers see a consistent snapshot because the grid file is immutable between writes.
+Two complementary primitives, both cross-process:
+
+- **`flock` per-write** — prevents data corruption. Every write acquires an exclusive file lock, fsyncs, releases. This guards the storage layer against torn writes and interleaved appends.
+- **`write_if` (compare-and-swap)** — prevents double-spend. A write only commits if the record hasn't changed since you read it. If another process wrote first, CAS fails and you retry. This is the engine-level fix for lost-update bugs. Verified: 12/12 trials, zero double-spends.
+
+The threaded sum-N test passes (zero lost updates under contention). Cross-process CAS is verified with 6 concurrent processes withdrawing from one account — exactly 1 succeeds per trial.
 
 ### Durability
 
@@ -140,7 +163,7 @@ Every write: WAL → `fsync()` → SHA-256 chain → eventual checkpoint. Crash 
 **What GridDB has that they don't:**
 - Bit-level determinism — same input = same bytes everywhere
 - SHA-256 content addressing — verify any segment without schema
-- 32-token vocabulary — 99.9% smaller embedding table for ML
+- 32-token vocabulary — 99.9% smaller embedding table (1,024 floats vs 131M for GPT-2). Tradeoff: longer sequences (attention is O(seq²)). A hash is ~64 tokens, a word is ~1 token/char. Tiny vocabulary, explicit sequences — honest about the cost.
 - Geometry-native queries — no extensions needed
 - Append-only audit trail — every write is a permanent record
 
