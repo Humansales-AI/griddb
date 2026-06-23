@@ -9,6 +9,7 @@
  */
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 import { Token, ParsedToken, ParsedNumber, ParsedWord, GridRecord } from './types';
 import { Parser } from './parser';
 import { packToBytes, unpackFromBytes } from './serialization';
@@ -233,6 +234,7 @@ export class AllocGrid {
 
 const WAL_MAGIC = 0x57414C47; // "WALG"
 const WAL_ENTRY_HDR = 16;      // magic(4) + recordId(4) + tokenCount(4) + padLen(4)
+const SHA256_LEN = 32;
 
 export class WALedAllocGrid {
   grid: AllocGrid;
@@ -248,9 +250,8 @@ export class WALedAllocGrid {
     this._replay();
   }
 
-  /** Crash-safe write: WAL first, then alloc+data. */
+  /** Crash-safe write: WAL with SHA-256 first, then alloc+data. */
   write(recordId: number, tokens: Token[]): number {
-    // 1. Append to WAL
     const [packed, padLen] = packToBytes(tokens);
     const packedBytes = Buffer.from(packed);
     const hdr = Buffer.alloc(WAL_ENTRY_HDR);
@@ -258,15 +259,40 @@ export class WALedAllocGrid {
     hdr.writeInt32BE(recordId, 4);
     hdr.writeUInt32BE(tokens.length, 8);
     hdr.writeUInt32BE(padLen, 12);
-    const entry = Buffer.concat([hdr, packedBytes]);
+    const body = Buffer.concat([hdr, packedBytes]);
+    const hash = crypto.createHash('sha256').update(body).digest();
     const fd = fs.openSync(this.walPath, 'a');
-    fs.writeSync(fd, entry);
+    fs.writeSync(fd, Buffer.concat([body, hash]));
     fs.fsyncSync(fd);
     fs.closeSync(fd);
     this.walSeq++;
-
-    // 2. Apply to alloc+data
     return this.grid.write(recordId, tokens);
+  }
+
+  private _replay(): void {
+    const data = fs.readFileSync(this.walPath);
+    let off = 0;
+    while (off + WAL_ENTRY_HDR <= data.length) {
+      const magic = data.readUInt32BE(off);
+      if (magic !== WAL_MAGIC) break;
+      const recordId = data.readInt32BE(off + 4);
+      const tokenCount = data.readUInt32BE(off + 8);
+      const padLen = data.readUInt32BE(off + 12);
+      const tokenBytes = Math.ceil((tokenCount * 5) / 8);
+      if (off + WAL_ENTRY_HDR + tokenBytes + SHA256_LEN > data.length) break;
+      // Verify SHA-256
+      const body = data.subarray(off, off + WAL_ENTRY_HDR + tokenBytes);
+      const expected = data.subarray(off + WAL_ENTRY_HDR + tokenBytes, off + WAL_ENTRY_HDR + tokenBytes + SHA256_LEN);
+      const computed = crypto.createHash('sha256').update(body).digest();
+      if (!computed.equals(expected)) {
+        console.error(`WAL SHA-256 mismatch at entry seq ${this.walSeq} — possible corruption`);
+        break;
+      }
+      const tokens = unpackFromBytes(new Uint8Array(data.subarray(off + WAL_ENTRY_HDR, off + WAL_ENTRY_HDR + tokenBytes)), padLen);
+      off += WAL_ENTRY_HDR + tokenBytes + SHA256_LEN;
+      try { this.grid.write(recordId, tokens); } catch {}
+      this.walSeq++;
+    }
   }
 
   read(recordId: number) { return this.grid.read(recordId); }
