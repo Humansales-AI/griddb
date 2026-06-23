@@ -22,7 +22,7 @@ import signal
 from typing import List, Tuple
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from binary_grid_db import Token, Encoder, Parser, ParsedNumber
+from binary_grid_db import Token, Encoder, Parser, ParsedNumber, pack_to_bytes
 from griddb_wal import WALGrid
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -109,7 +109,7 @@ def test_crash_recovery():
 import sys, os, signal
 sys.path.insert(0, "{os.path.dirname(os.path.abspath(__file__))}")
 from griddb_wal import WALGrid
-from binary_grid_db import Encoder, Token
+from binary_grid_db import Encoder, Token, pack_to_bytes
 
 wal = WALGrid(data_dir="{d}")
 for i in range(200):
