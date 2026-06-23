@@ -170,8 +170,22 @@ class GroupCommitWAL:
         """Write all buffered entries to WAL, fsync once."""
         if not self._buffer:
             return
-        for _, tokens in self._buffer:
-            self.wal.wal_append_record(tokens)
+        self.wal._acquire_lock()
+        try:
+            fd = open(self.wal.wal_path, 'ab')
+            for _, tokens in self._buffer:
+                packed, pad_len = pack_to_bytes(tokens)
+                seq = self.wal._next_seq; self.wal._next_seq += 1
+                prev = self.wal._last_hash_offset
+                hdr = struct.pack('>IIIiI', 0x47444257, seq, len(tokens), prev, pad_len)
+                content = hdr + bytes(packed)
+                entry_hash = hashlib.sha256(content).digest()
+                fd.write(content + entry_hash)
+                self.wal._last_hash_offset = fd.tell() - 32  # hash at end
+                self.wal.grid.append_tokens(tokens)
+            fd.flush(); os.fsync(fd.fileno()); fd.close()
+        finally:
+            self.wal._release_lock()
         self._buffer = []
         self._last_flush = time.time()
         self._flush_count += 1

@@ -317,12 +317,35 @@ export class GroupCommitAllocGrid {
     }
   }
 
-  /** Force flush all buffered writes. */
+  /** Force flush all buffered writes — one fsync for entire batch. */
   flush(): void {
     if (this.buffer.length === 0) return;
+    // Open FDs once for the entire batch
+    const dfd = fs.openSync(this.grid['dataPath'], 'r+');
+    const afd = fs.openSync(this.grid['allocFPath'], 'r+');
+    let dataEnd = this.grid['dataEnd'];
+
     for (const w of this.buffer) {
-      this.grid.write(w.recordId, w.tokens);
+      const [packed, _] = packToBytes(w.tokens);
+      const packedBytes = Buffer.from(packed);
+      const bitLen = w.tokens.length * 5;
+      const off = dataEnd; dataEnd += packedBytes.length;
+      // Data
+      fs.writeSync(dfd, packedBytes, 0, packedBytes.length, off);
+      // Alloc
+      const ao = 8 + w.recordId * 16;
+      const ab = Buffer.alloc(16);
+      ab.writeBigUInt64BE(BigInt(off), 0); ab.writeUInt32BE(bitLen, 8); ab.writeUInt32BE(1, 12);
+      if (fs.fstatSync(afd).size < ao + 16) fs.writeSync(afd, Buffer.alloc(1), 0, 1, ao + 15);
+      fs.writeSync(afd, ab, 0, 16, ao);
     }
+    // Update data header once
+    const dh = Buffer.alloc(8); dh.writeBigUInt64BE(BigInt(dataEnd), 0);
+    fs.writeSync(dfd, dh, 0, 8, 4);
+    // One fsync per file
+    fs.fsyncSync(dfd); fs.closeSync(dfd);
+    fs.fsyncSync(afd); fs.closeSync(afd);
+    this.grid['dataEnd'] = dataEnd;
     this.flushCount++;
     this.buffer = [];
   }
