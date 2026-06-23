@@ -23,7 +23,9 @@ export class Encoder {
     if (value === 0 || value === 0n) return [Token.D0, Token.END];
 
     const sign = typeof value === 'bigint' ? (value < 0n ? -1 : 1) : (value >= 0 ? 1 : -1);
-    const abs = typeof value === 'bigint' ? (value < 0n ? -value : value) : BigInt(Math.abs(value as number));
+    // Use BigInt for all values to avoid JS number precision loss above 2^53
+    const n = typeof value === 'bigint' ? value : BigInt(value);
+    const abs = n < 0n ? -n : n;
     const digitsStr = abs.toString();
 
     const tokens: Token[] = [];
