@@ -19,11 +19,12 @@ export class Encoder {
    * For negative numbers, each digit carries its own sign.
    * Zero digits in negative numbers use D0 (no -0 concept).
    */
-  static encodeInteger(value: number): Token[] {
-    if (value === 0) return [Token.D0, Token.END];
+  static encodeInteger(value: number | bigint): Token[] {
+    if (value === 0 || value === 0n) return [Token.D0, Token.END];
 
-    const sign = value >= 0 ? 1 : -1;
-    const digitsStr = Math.abs(value).toString();
+    const sign = typeof value === 'bigint' ? (value < 0n ? -1 : 1) : (value >= 0 ? 1 : -1);
+    const abs = typeof value === 'bigint' ? (value < 0n ? -value : value) : BigInt(Math.abs(value as number));
+    const digitsStr = abs.toString();
 
     const tokens: Token[] = [];
     for (const ch of digitsStr) {
