@@ -149,13 +149,14 @@ class Transaction:
 
     _next_id = 1
 
-    def __init__(self, grid: AllocGrid, wal: TxnWAL):
+    def __init__(self, grid: AllocGrid, wal: TxnWAL, on_done=None):
         self.grid = grid
         self.wal = wal
         self.txn_id = Transaction._next_id
         Transaction._next_id += 1
         self._finalized = False
         self._op_count = 0
+        self._on_done = on_done  # callback to clear parent's active flag
 
     def put(self, record_id: int, tokens: List[Token]):
         self._check_open()
@@ -181,12 +182,15 @@ class Transaction:
         self.wal.commit_txn(self.txn_id)
         self._finalized = True
         self._apply()
+        if self._on_done:
+            self._on_done()  # Clear parent's active flag
 
     def rollback(self):
         """Mark transaction as rolled back — writes never applied to grid."""
         self._check_open()
         self._finalized = True
-        # Pending writes remain in WAL but are skipped on recovery
+        if self._on_done:
+            self._on_done()  # Clear parent's active flag
 
     def _apply(self):
         """Apply all committed writes from this transaction to the grid."""
@@ -246,21 +250,19 @@ class TransactionalGrid:
     def begin(self) -> Transaction:
         if self._active:
             raise RuntimeError("Transaction already in progress")
-        self._active = Transaction(self.grid, self.wal)
+        def _done():
+            self._txn_count += 1
+            self._active = None
+        self._active = Transaction(self.grid, self.wal, on_done=_done)
         return self._active
 
     def commit(self):
         if not self._active: raise RuntimeError("No active transaction")
         self._active.commit()
-        self._txn_count += 1
-        txn = self._active
-        self._active = None
 
     def rollback(self):
         if not self._active: raise RuntimeError("No active transaction")
         self._active.rollback()
-        self._txn_count += 1
-        self._active = None
 
     def put(self, record_id: int, tokens: List[Token]):
         if self._active: self._active.put(record_id, tokens)
