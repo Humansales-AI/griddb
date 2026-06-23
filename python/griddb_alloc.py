@@ -274,6 +274,7 @@ class AllocGrid:
         for t in tokens:
             parser.feed(t)
         parser.finalize()
+        parser.reassemble()
 
         return AllocRecord(
             record_id=record_id,

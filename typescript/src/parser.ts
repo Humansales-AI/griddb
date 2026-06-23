@@ -28,10 +28,16 @@ export class Parser {
     if (this.accumulator.length === 0) return;
     const digits = [...this.accumulator];
     const n = digits.length;
-    let value = 0;
-    for (let i = 0; i < n; i++) value += digits[i] * Math.pow(10, n - 1 - i);
-    this.output.push({ type: 'number', digits, value });
+    // Use BigInt positional sum to avoid JS precision loss above 2^53
+    let value: number | bigint = 0n;
+    for (let i = 0; i < n; i++) {
+      value += BigInt(digits[i]) * (10n ** BigInt(n - 1 - i));
+    }
+    // Convert to number if it fits safely, keep as bigint otherwise
+    const asNum = Number(value);
+    this.output.push({ type: 'number', digits, value: Number.isSafeInteger(asNum) ? asNum : value } as any);
     this.accumulator = [];
+  }
   }
 
   private finalizeWord(): void {

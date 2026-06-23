@@ -138,6 +138,7 @@ export class AllocGrid {
     const parser = new Parser();
     parser.feedTokens(tokens);
     parser.finalize();
+    parser.reassemble();
 
     return {
       recordId,
