@@ -55,7 +55,8 @@ export enum Token {
 export enum ParserState {
   NUM = 0,
   WORD = 1,
-  SPECIAL = 2,   // START-in-WORD triggers this: lowercase + special chars
+  SPECIAL = 2,
+  SPECIAL2 = 3,
 }
 
 // ── Parsed token types ──────────────────────────────────────────────────────
