@@ -50,21 +50,72 @@ python3 examples/grid_transformer.py   # trained in seconds, queries the grid vi
 
 ## The 32‑Token Lexicon
 
-Three contexts, same 32 binary codes:
+Four contexts, same 32 binary codes. 28 mappable slots each (00000–11011). Four controls (11100–11111) retain meaning everywhere.
 
-| Binary  | NUM | WORD | SPECIAL |
-|:-------:|:---:|:----:|:-------:|
-| `00000` | `0` | `A`  | `a`     |
-| ... | ... | ... | ... |
-| `11001` | `-9` | `Z` | `z` |
-| `11010` | `^` | `␣` | `@` |
-| `11011` | `S` | `.` | `-` |
-| `11100` | **RECORD** | **RECORD** | **RECORD** |
-| `11101` | **CHECKSUM** | **CHECKSUM** | **CHECKSUM** |
-| `11110` | **END** | **END** | **END** |
-| `11111` | **START** | **START→** | **START→** |
+| Binary  | NUM | WORD | SPECIAL | SPECIAL2 |
+|:-------:|:---:|:----:|:-------:|:--------:|
+| `00000` | `0` | `A`  | `a`     | `!`      |
+| `00001` | `1` | `B`  | `b`     | `"`      |
+| `00010` | `2` | `C`  | `c`     | `#`      |
+| `00011` | `3` | `D`  | `d`     | `$`      |
+| `00100` | `4` | `E`  | `e`     | `%`      |
+| `00101` | `5` | `F`  | `f`     | `&`      |
+| `00110` | `6` | `G`  | `g`     | `'`      |
+| `00111` | `7` | `H`  | `h`     | `(`      |
+| `01000` | `8` | `I`  | `i`     | `)`      |
+| `01001` | `9` | `J`  | `j`     | `*`      |
+| `01010` | `+` | `K`  | `k`     | `+`      |
+| `01011` | `-` | `L`  | `l`     | `,`      |
+| `01100` | `*` | `M`  | `m`     | `/`      |
+| `01101` | `/` | `N`  | `n`     | `:`      |
+| `01110` | `=` | `O`  | `o`     | `;`      |
+| `01111` | `(` | `P`  | `p`     | `<`      |
+| `10000` | `)` | `Q`  | `q`     | `=`      |
+| `10001` | `-1`| `R`  | `r`     | `>`      |
+| `10010` | `-2`| `S`  | `s`     | `?`      |
+| `10011` | `-3`| `T`  | `t`     | `[`      |
+| `10100` | `-4`| `U`  | `u`     | `\`      |
+| `10101` | `-5`| `V`  | `v`     | `]`      |
+| `10110` | `-6`| `W`  | `w`     | `^`      |
+| `10111` | `-7`| `X`  | `x`     | `_`      |
+| `11000` | `-8`| `Y`  | `y`     | `` ` ``  |
+| `11001` | `-9`| `Z`  | `z`     | `{`      |
+| `11010` | `^` | `␣`  | `@`     | `\|`     |
+| `11011` | `S` | `.`  | `-`     | `}`      |
+| `11100` | **RECORD** | **RECORD** | **RECORD** | **RECORD** |
+| `11101` | **CHECKSUM** | **CHECKSUM** | **CHECKSUM** | **CHECKSUM** |
+| `11110` | **END** | **END** | **END** | **END** |
+| `11111` | **START** | **START** | **START** | **START** |
 
-`START` in NUM → WORD. `START` in WORD → SPECIAL. Digits via context switching.
+### Context Switching — How It Works
+
+The parser starts in **NUM** state. Four control tokens navigate the stack:
+
+| Token | Current state | Action |
+|:-----:|:--------------|:-------|
+| `START` (11111) | NUM | Enter WORD |
+| `START` (11111) | WORD | Enter SPECIAL |
+| `START` (11111) | SPECIAL | Enter SPECIAL2 |
+| `END` (11110) | SPECIAL2 | Pop to SPECIAL |
+| `END` (11110) | SPECIAL | Pop to WORD |
+| `END` (11110) | WORD | Pop to NUM (finalize) |
+| `RECORD` (11100) | Any | Finalize, emit record boundary, pop to NUM |
+| `CHECKSUM` (11101) | Any | Emit integrity marker |
+
+**Encoding examples:**
+
+```
+"HI"    → START  H  I  END                              (2 letters, WORD)
+"hi"    → START  START  h  i  END  END                   (2 lowercase, SPECIAL)
+"Hi"    → START  H  START  i  END  END                   (mixed case)
+"a!b"   → START  START  a  START  !  END  b  END  END    (SPECIAL2 punctuation)
+"a@b"   → START  START  a  @  b  END  END                (@ stays in SPECIAL)
+"a.b"   → START  a  .  b  END                            (. in WORD, no context switch)
+```
+
+Digits (0-9) encode by temporarily popping to NUM: `END END D3 START` — pop SPECIAL→WORD→NUM, emit digit, re-enter WORD. A 64-char hex hash with digits and letters costs ~70-170 tokens depending on digit density.
+
+The **RECORD** token (11100) terminates logical tuples. Everything between two RECORD tokens is one record. This is the boundary for geometric queries — Manhattan distance compares record vectors.
 
 ---
 
