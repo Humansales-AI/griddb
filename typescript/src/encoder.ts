@@ -6,7 +6,7 @@
  */
 
 import { Token } from './types';
-import { DIGIT_TO_TOKEN, SYMBOL_TO_OPERATOR, CHAR_TO_WORD_TOKEN } from './tokens';
+import { DIGIT_TO_TOKEN, SYMBOL_TO_OPERATOR, CHAR_TO_WORD_TOKEN, CHAR_TO_SPECIAL_TOKEN } from './tokens';
 
 export class Encoder {
   /**
@@ -19,11 +19,12 @@ export class Encoder {
    * For negative numbers, each digit carries its own sign.
    * Zero digits in negative numbers use D0 (no -0 concept).
    */
-  static encodeInteger(value: number): Token[] {
-    if (value === 0) return [Token.D0, Token.END];
+  static encodeInteger(value: number | bigint): Token[] {
+    if (value === 0 || value === 0n) return [Token.D0, Token.END];
 
     const sign = value >= 0 ? 1 : -1;
-    const digitsStr = Math.abs(value).toString();
+    const absVal = typeof value === 'bigint' ? (value < 0n ? -value : value) : Math.abs(value);
+    const digitsStr = absVal.toString();
 
     const tokens: Token[] = [];
     for (const ch of digitsStr) {
@@ -61,12 +62,43 @@ export class Encoder {
    */
   static encodeWord(text: string): Token[] {
     const tokens: Token[] = [Token.START];
-    for (const ch of text.toUpperCase()) {
-      const tok = CHAR_TO_WORD_TOKEN.get(ch);
-      if (tok === undefined) throw new Error(`Character '${ch}' cannot be encoded`);
-      tokens.push(tok);
+    let inSpecial = false;
+
+    for (const ch of text) {
+      // 1. Digit → encode via context switch to NUM
+      if (ch >= '0' && ch <= '9') {
+        if (inSpecial) { tokens.push(Token.END); inSpecial = false; }
+        tokens.push(Token.END);  // WORD → NUM
+        tokens.push(DIGIT_TO_TOKEN.get(parseInt(ch, 10))!);
+        tokens.push(Token.START);  // NUM → WORD
+        continue;
+      }
+      // 2. WORD context (uppercase A-Z, space, period)
+      const wordTok = CHAR_TO_WORD_TOKEN.get(ch);
+      if (wordTok !== undefined) {
+        if (inSpecial) { tokens.push(Token.END); inSpecial = false; }
+        tokens.push(wordTok);
+        continue;
+      }
+      // 3. SPECIAL context (lowercase a-z, @, -)
+      const specialTok = CHAR_TO_SPECIAL_TOKEN.get(ch);
+      if (specialTok !== undefined) {
+        if (!inSpecial) { tokens.push(Token.START); inSpecial = true; }
+        tokens.push(specialTok);
+        continue;
+      }
+      // 4. Fallback: uppercase the char and try WORD
+      const upperTok = CHAR_TO_WORD_TOKEN.get(ch.toUpperCase());
+      if (upperTok !== undefined) {
+        if (inSpecial) { tokens.push(Token.END); inSpecial = false; }
+        tokens.push(upperTok);
+        continue;
+      }
+      throw new Error(`Character '${ch}' cannot be encoded`);
     }
-    tokens.push(Token.END);
+
+    if (inSpecial) tokens.push(Token.END);  // Pop SPECIAL → WORD
+    tokens.push(Token.END);  // Pop WORD → NUM
     return tokens;
   }
 
