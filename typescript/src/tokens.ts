@@ -90,6 +90,23 @@ for (const [tok, ch] of SPECIAL_CHAR) {
   CHAR_TO_SPECIAL_TOKEN.set(ch, tok);
 }
 
+// ── SPECIAL2 context: extended punctuation ──────────────────────────────
+
+export const SPECIAL2_CHAR: Map<Token, string> = new Map([
+  [Token.D0, '!'], [Token.D1, '"'], [Token.D2, '#'], [Token.D3, '$'],
+  [Token.D4, '%'], [Token.D5, '&'], [Token.D6, "'"], [Token.D7, '('],
+  [Token.D8, ')'], [Token.D9, '*'],
+  [Token.T_PLUS, '+'], [Token.T_MINUS, ','], [Token.T_MUL, '/'],
+  [Token.T_DIV, ':'], [Token.T_EQ, ';'], [Token.T_LPAREN, '<'],
+  [Token.T_RPAREN, '='], [Token.N1, '>'], [Token.N2, '?'],
+  [Token.N3, '['], [Token.N4, '\\'], [Token.N5, ']'],
+  [Token.N6, '^'], [Token.N7, '_'], [Token.N8, '`'],
+  [Token.N9, '{'], [Token.T_POW, '|'], [Token.T_SCALE, '}'],
+]);
+export const CHAR_TO_SPECIAL2_TOKEN: Map<string, Token> = new Map(
+  [...SPECIAL2_CHAR].map(([k, v]) => [v, k])
+);
+
 // ── Control tokens ─────────────────────────────────────────────────────────
 
 export const CONTROL_TOKENS: Set<Token> = new Set([
