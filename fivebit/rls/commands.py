@@ -35,7 +35,14 @@ class CommandRLS(AllocGrid):
         self._bypass_user: Optional[int] = None
 
     def write_owned(self, record_id: int, user_id: int, tokens: List[Token]) -> int:
-        """Write a record owned by user_id. Prepends AUTH command."""
+        """Write a record owned by user_id. Refuses to overwrite another owner."""
+        existing = super().read(record_id)
+        if existing and not existing.is_tombstone:
+            perms = self._parse_commands(existing.tokens)
+            owner = perms.get('owner')
+            if owner is not None and owner != user_id and self._bypass_user is None:
+                raise PermissionDenied(
+                    f"CommandRLS: user {user_id} cannot overwrite record {record_id} (owner={owner})")
         cmd_tokens = Encoder.encode_command('AUTH', user_id)
         return super().write(record_id, cmd_tokens + tokens)
 
@@ -70,16 +77,22 @@ class CommandRLS(AllocGrid):
         return result
 
     def grant_read(self, record_id: int, user_id: int, grantee_id: int):
-        """Append a GRANT_R command to the record."""
+        """Grant read access. Only the owner can grant."""
         rec = super().read(record_id)
         if not rec: return
+        perms = self._parse_commands(rec.tokens)
+        if perms.get('owner') != user_id and self._bypass_user is None:
+            raise PermissionDenied(f"Only owner can grant access (owner={perms.get('owner')})")
         cmd = Encoder.encode_command('GRANT_R', grantee_id)
         self.write_owned(record_id, user_id, rec.tokens + cmd)
 
     def revoke_read(self, record_id: int, user_id: int, target_id: int):
-        """Append a REVOKE command to the record."""
+        """Revoke read access. Only the owner can revoke."""
         rec = super().read(record_id)
         if not rec: return
+        perms = self._parse_commands(rec.tokens)
+        if perms.get('owner') != user_id and self._bypass_user is None:
+            raise PermissionDenied(f"Only owner can revoke access (owner={perms.get('owner')})")
         cmd = Encoder.encode_command('REVOKE', target_id)
         self.write_owned(record_id, user_id, rec.tokens + cmd)
 
