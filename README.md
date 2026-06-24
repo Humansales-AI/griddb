@@ -187,20 +187,20 @@ Every write: WAL → `fsync()` → SHA-256 chain → eventual checkpoint. Crash 
 
 ## Performance
 
-| Operation | 5bit (in-memory) | 5bit (durable) | SQLite | PostgreSQL |
-|---|---|---|---|---|
-| Point read (O(1) AllocGrid) | ~120µs | ~120µs | ~200µs | ~200µs |
-| Write (single, fsync'd) | — | ~630µs | ~300µs | ~300µs |
-| Write (group commit, batched) | — | ~630µs amortized | ~200µs amortized | ~200µs amortized |
-| Range scan (1K, B-tree) | ~2ms | ~2ms | ~3ms | ~2ms |
-| Hash lookup | ~150µs | ~150µs | ~200µs | ~200µs |
-| Schema overhead | **0 bytes** | **0 bytes** | ~4B/row | ~4B/row |
-| Deterministic encoding | ✓ | ✓ | ✗ | ✗ |
-| Content-addressable | SHA-256 | SHA-256 | ✗ | ✗ |
-| Geometry queries | Native | Native | ✗ | ✗ |
+SQLite has 50 years of optimization, a page cache, B-tree, and WAL mode. 5bit is an append-only 5-bit fabric with no page cache and per-read fd opens. Honest numbers:
 
-*Durable numbers from group commit correctness suite (~1,580 writes/s, batched fsync).*
-*In-memory numbers from AllocGrid point reads (no fsync on read path).*
+| Operation | 5bit | SQLite (WAL) |
+|---|---|---|
+| Point read (O(1) alloc) | ~120µs (token) / higher with I/O | ~50µs (page cache) |
+| Write (group commit, fsync'd) | ~630µs amortized (~1,580/s) | ~50µs amortized (~20,000/s) |
+| Compaction | Manual, O(n) scan | Auto, background |
+| Schema overhead | **0 bytes** | ~4 bytes/row |
+| Deterministic encoding | ✓ (SHA-256 content-addressed) | ✗ |
+| Geometry queries (Manhattan/Hamming) | Native | ✗ (requires app code) |
+| Cross-language determinism | ✓ (53/53 byte-identical Python≡TS) | ✗ |
+| Audit trail | Append-only, every write permanent | ✗ (VACUUM reclaims) |
+
+5bit is not faster than SQLite. It's deterministic, content-addressed, and schema-free — properties SQLite physically cannot provide. Different tools for different jobs.
 
 ---
 
