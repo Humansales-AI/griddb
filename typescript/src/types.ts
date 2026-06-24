@@ -57,6 +57,7 @@ export enum ParserState {
   WORD = 1,
   SPECIAL = 2,
   SPECIAL2 = 3,
+  SPECIAL3 = 4,
 }
 
 // ── Parsed token types ──────────────────────────────────────────────────────
