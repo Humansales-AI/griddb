@@ -191,7 +191,7 @@ SQLite has 50 years of optimization, a page cache, B-tree, and WAL mode. 5bit is
 
 | Operation | 5bit | SQLite (WAL) |
 |---|---|---|
-| Point read (O(1) alloc) | ~120µs (token) / higher with I/O | ~50µs (page cache) |
+| Point read (O(1) alloc) | ~120µs uncached / ~2µs cached (LRU) | ~50µs (page cache) |
 | Write (group commit, fsync'd) | ~630µs amortized (~1,580/s) | ~50µs amortized (~20,000/s) |
 | Compaction | Manual, O(n) scan | Auto, background |
 | Schema overhead | **0 bytes** | ~4 bytes/row |
