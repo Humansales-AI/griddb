@@ -35,35 +35,43 @@ class APIHandler(BaseHTTPRequestHandler):
 
     def _send(self, code: int, body: Any, etag: str = ''):
         data = json.dumps(body).encode() if not isinstance(body, bytes) else body
+        # Check conditional GET BEFORE writing status
+        if etag:
+            if_none = self.headers.get('If-None-Match', '').strip('"')
+            if if_none == etag:
+                self.send_response(304)
+                self.end_headers()
+                return
         self.send_response(code)
         self.send_header('Content-Type', 'application/json')
         self.send_header('Access-Control-Allow-Origin', '*')
         if etag:
             self.send_header('ETag', f'"{etag}"')
-            # Conditional GET
-            if_none = self.headers.get('If-None-Match', '')
-            if if_none == f'"{etag}"':
-                self.send_response(304)
-                self.end_headers()
-                return
         self.send_header('Content-Length', str(len(data)))
         self.end_headers()
         self.wfile.write(data)
 
     def _record_to_json(self, rec: AllocRecord) -> dict:
-        """Convert a parsed record to JSON using the encoding spec."""
+        """Convert a parsed record to JSON. Pairs values to spec fields in parse order."""
         result = {}
-        nums = [p.value for p in rec.parsed if isinstance(p, ParsedNumber)]
-        words = [p.text for p in rec.parsed if isinstance(p, ParsedWord)]
+        # Walk parsed output in order, collecting nums + words as they appear
+        values: List[Any] = []
+        pending_text = ''
+        for p in rec.parsed:
+            if isinstance(p, ParsedNumber):
+                if pending_text:
+                    values.append(pending_text)
+                    pending_text = ''
+                values.append(p.value)
+            elif isinstance(p, ParsedWord):
+                pending_text += p.text
+        if pending_text:
+            values.append(pending_text)
+
         fields = self.spec.get('fields', [])
         for i, field in enumerate(fields):
-            if i < len(nums):
-                result[field] = nums[i]
-            elif i - len(nums) < len(words):
-                wi = i - len(nums)
-                # Join adjacent word fragments
-                text = ''.join(words[wi:]) if wi < len(words) else ''
-                result[field] = text
+            if i < len(values):
+                result[field] = values[i]
         result['_id'] = rec.record_id
         result['_hash'] = self._record_hash(rec)
         return result
@@ -168,8 +176,9 @@ class APIHandler(BaseHTTPRequestHandler):
                 if if_match and existing:
                     current_hash = self._record_hash(existing)
                     if if_match != f'"{current_hash}"':
-                        self._send(409, {'error': 'Conflict — record modified'})
+                        self._send(412, {'error': 'Precondition Failed — record modified'})
                         return
+                self._etag_cache.pop(rid, None)  # invalidate stale ETag
                 self.grid.write(rid, tokens)
                 rec = self.grid.read(rid)
                 if rec:
@@ -187,6 +196,7 @@ class APIHandler(BaseHTTPRequestHandler):
         if len(parts) >= 3 and parts[1] == 'records':
             try:
                 rid = int(parts[2])
+                self._etag_cache.pop(rid, None)
                 self.grid.delete(rid)
                 self._send(200, {'deleted': rid})
                 return
