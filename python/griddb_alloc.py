@@ -284,7 +284,7 @@ class AllocGrid:
             return self._cache[record_id]
 
         entry = self._read_alloc_entry(record_id)
-        if entry.is_free:
+        if entry.is_free or entry.flags == FLAG_TOMBSTONE:
             return None
 
         byte_len = entry.byte_length

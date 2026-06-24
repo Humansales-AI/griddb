@@ -10,7 +10,7 @@ Usage:
   uid = auth.signup("alice@demo.com", "password123", "Alice")
   session = auth.login("alice@demo.com", "password123")
 """
-import os, sys, hashlib, secrets, time
+import os, sys, hashlib, hmac, secrets, time
 from typing import Optional, Dict
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'python'))
@@ -56,7 +56,8 @@ class AuthStore:
     def _verify(self, pw: str, stored: str) -> bool:
         try:
             s, h = stored.split('$')
-            return h == hashlib.pbkdf2_hmac('sha256', pw.encode(), s.encode(), 100_000).hex()
+            computed = hashlib.pbkdf2_hmac('sha256', pw.encode(), s.encode(), 100_000).hex()
+            return hmac.compare_digest(h, computed)
         except: return False
 
     def _rid(self, uid: int, field: int) -> int: return uid * FIELD_STRIDE + field
@@ -116,7 +117,7 @@ class AuthStore:
 
     def _create_session(self, uid: int):
         token = secrets.token_hex(32)
-        rid = SESSION_BASE + (hash(token) & 0xFFFFF)
+        rid = SESSION_BASE + (int.from_bytes(hashlib.sha256(token.encode()).digest()[:4], 'big') & 0xFFFFF)
         # Store token as NUM tokens (ASCII bytes) to survive context switching
         t = [Encoder.encode_integer(ord(c)) for c in token]
         tokens = [tkn for sub in t for tkn in sub]  # flatten
@@ -127,7 +128,7 @@ class AuthStore:
         return AuthStore.Session(token, uid, time.time() + 86400)
 
     def verify_session(self, token: str) -> Optional[int]:
-        rid = SESSION_BASE + (hash(token) & 0xFFFFF)
+        rid = SESSION_BASE + (int.from_bytes(hashlib.sha256(token.encode()).digest()[:4], 'big') & 0xFFFFF)
         rec = self.grid.read(rid)
         if not rec: return None
         nums = [p.value for p in rec.parsed if isinstance(p, ParsedNumber)]
@@ -140,6 +141,6 @@ class AuthStore:
         return None
 
     def logout(self, token: str):
-        self.grid.delete(SESSION_BASE + (hash(token) & 0xFFFFF))
+        self.grid.delete(SESSION_BASE + (int.from_bytes(hashlib.sha256(token.encode()).digest()[:4], 'big') & 0xFFFFF))
 
     def close(self): self.grid.close()

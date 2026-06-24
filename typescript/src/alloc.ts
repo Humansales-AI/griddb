@@ -125,7 +125,7 @@ export class AllocGrid {
   /** O(1): read record at recordId. */
   read(recordId: number): AllocRecord | null {
     const entry = this._readAllocEntry(recordId);
-    if (entry.flags === FLAG_FREE || entry.byteOffset === 0) return null;
+    if (entry.flags === FLAG_FREE || entry.flags === FLAG_TOMBSTONE || entry.byteOffset === 0) return null;
 
     const byteLen = Math.ceil(entry.bitLength / 8);
     const buf = Buffer.alloc(byteLen);
