@@ -23,32 +23,38 @@ from binary_grid_db import Token, Encoder, Parser, ParsedNumber, pack_to_bytes, 
 from griddb_alloc import AllocGrid, AllocRecord
 from fivebit.rls.engine import PermissionDenied
 
+# Key cache — PBKDF2 only runs once per user, not per read/write
+_key_cache: dict = {}
+
 def derive_key(user_id: int, secret: bytes) -> bytes:
-    """Derive a 32-byte key from user_id + secret (PBKDF2-SHA256)."""
-    return hashlib.pbkdf2_hmac('sha256', secret, str(user_id).encode(), 100_000, 32)
+    """Derive a 32-byte key from user_id + secret. Cached after first derivation."""
+    cache_key = (user_id, secret)
+    if cache_key not in _key_cache:
+        _key_cache[cache_key] = hashlib.pbkdf2_hmac('sha256', secret, str(user_id).encode(), 100_000, 32)
+    return _key_cache[cache_key]
 
 def _ctr_encrypt(key: bytes, plaintext: bytes) -> bytes:
-    """Simple CTR-mode encryption using SHA-256 as the PRF."""
+    """CTR-mode encryption using HMAC-SHA256 as the PRF (standard construction)."""
     nonce = os.urandom(16)
     result = bytearray(nonce)
     counter = 0
     for i in range(0, len(plaintext), 32):
         ctr_block = nonce + struct.pack('>Q', counter)
-        keystream = hashlib.sha256(key + ctr_block).digest()
+        keystream = hmac.new(key, ctr_block, 'sha256').digest()
         chunk = plaintext[i:i+32]
         result.extend(b ^ k for b, k in zip(chunk, keystream[:len(chunk)]))
         counter += 1
     return bytes(result)
 
 def _ctr_decrypt(key: bytes, ciphertext: bytes) -> bytes:
-    """Decrypt CTR-mode ciphertext."""
+    """Decrypt CTR-mode ciphertext. CTR is symmetric — same as encrypt."""
     nonce = ciphertext[:16]
     data = ciphertext[16:]
     result = bytearray()
     counter = 0
     for i in range(0, len(data), 32):
         ctr_block = nonce + struct.pack('>Q', counter)
-        keystream = hashlib.sha256(key + ctr_block).digest()
+        keystream = hmac.new(key, ctr_block, 'sha256').digest()
         chunk = data[i:i+32]
         result.extend(b ^ k for b, k in zip(chunk, keystream[:len(chunk)]))
         counter += 1
