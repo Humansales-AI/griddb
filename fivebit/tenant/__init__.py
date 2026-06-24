@@ -20,7 +20,7 @@ Usage:
       g.read(0),            # beta-inc's records — different from acme-corp
   ])
 """
-import os, sys, threading
+import os, sys, threading, hashlib
 from typing import Callable, Optional, List, TypeVar
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'python'))
@@ -45,10 +45,12 @@ class TenantGrid:
         self._active_tenant: Optional[str] = None
 
     def _scope(self, record_id: int) -> int:
-        """Map a local record_id to a tenant-scoped global ID."""
+        """Map a local record_id to a tenant-scoped global ID.
+        Uses SHA-256 for stable hashing across processes."""
         if not self._active_tenant:
             raise RuntimeError("No active tenant — use with_tenant()")
-        tenant_hash = abs(hash(self._active_tenant)) % (TENANT_STRIDE - 1) + 1
+        h = hashlib.sha256(self._active_tenant.encode()).digest()
+        tenant_hash = int.from_bytes(h[:4], 'big') % (TENANT_STRIDE - 1) + 1
         return tenant_hash * TENANT_STRIDE + record_id
 
     def with_tenant(self, tenant_id: str, fn: Callable[['TenantGrid'], T]) -> T:
@@ -77,7 +79,7 @@ class TenantGrid:
         results = []
         for i in range(max_records):
             rec = self.grid.read(base + i)
-            if rec and not rec.isTombstone:
+            if rec and rec.flags != 2:  # FLAG_TOMBSTONE = 2
                 results.append(rec)
         return results
 

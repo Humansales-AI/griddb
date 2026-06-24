@@ -75,16 +75,18 @@ class PerUserGrid(AllocGrid):
     def write(self, record_id: int, tokens: List[Token]) -> int:
         """Write tokens encrypted with the current user's key."""
         self._require_key()
-        # Derive per-record key from user_key + record_id
-        record_key = hashlib.sha256(
-            self._current_key + struct.pack('>Q', record_id)
-        ).digest()
+        # HKDF-expand: per-record key from user_key + record_id
+        # Uses HMAC-SHA256 as the PRF (stdlib HKDF)
+        info = struct.pack('>Q', record_id)
+        record_key = hmac.new(self._current_key, info + b'\x01', 'sha256').digest()
 
-        # Encrypt with HMAC-CTR (stdlib only)
+        # Encrypt with HMAC-CTR. Separate enc + MAC keys via HKDF.
+        enc_key = hmac.new(record_key, b'enc', 'sha256').digest()
+        mac_key = hmac.new(record_key, b'mac', 'sha256').digest()
         packed, pad = pack_to_bytes(tokens)
         nonce = os.urandom(16)
-        ciphertext = self._ctr(record_key, nonce, bytes(packed))
-        mac = hmac.new(record_key, ciphertext, 'sha256').digest()[:16]
+        ciphertext = self._ctr(enc_key, nonce, bytes(packed))
+        mac = hmac.new(mac_key, ciphertext, 'sha256').digest()[:16]
         blob = struct.pack('>B', pad) + nonce + ciphertext + mac
 
         # Store blob as NUM tokens
@@ -112,17 +114,18 @@ class PerUserGrid(AllocGrid):
         mac = blob[-16:]
         ciphertext = blob[17:-16]
 
-        # Derive record key and verify
-        record_key = hashlib.sha256(
-            self._current_key + struct.pack('>Q', record_id)
-        ).digest()
-        expected_mac = hmac.new(record_key, ciphertext, 'sha256').digest()[:16]
+        # Re-derive record key via HKDF, then enc + mac subkeys
+        info = struct.pack('>Q', record_id)
+        record_key = hmac.new(self._current_key, info + b'\x01', 'sha256').digest()
+        mac_key = hmac.new(record_key, b'mac', 'sha256').digest()
+        expected_mac = hmac.new(mac_key, ciphertext, 'sha256').digest()[:16]
         if not hmac.compare_digest(mac, expected_mac):
             raise PermissionError(
                 f"Record {record_id}: wrong key — belongs to a different user")
 
-        # Decrypt
-        plaintext = self._ctr(record_key, nonce, ciphertext)
+        # Decrypt with separate encryption key
+        enc_key = hmac.new(record_key, b'enc', 'sha256').digest()
+        plaintext = self._ctr(enc_key, nonce, ciphertext)
         tokens = unpack_from_bytes(bytearray(plaintext), pad)
         parser = Parser()
         parser.feed_tokens(tokens); parser.finalize()
