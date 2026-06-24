@@ -159,6 +159,23 @@ SPECIAL2_CHAR: Dict[Token, str] = {
 
 CHAR_TO_SPECIAL2_TOKEN: Dict[str, Token] = {v: k for k, v in SPECIAL2_CHAR.items()}
 
+# ── SPECIAL3 context: control commands (token-level RLS) ──────────────────
+# Triggered by START-in-SPECIAL2. Uses 28 slots as commands, not characters.
+# Each command takes a NUM argument (user_id).
+
+CMD_AUTH = Token.D0     # 00000 — declare record owner
+CMD_GRANT_R = Token.D1  # 00001 — grant read access
+CMD_GRANT_W = Token.D2  # 00010 — grant write access
+CMD_REVOKE = Token.D3   # 00011 — revoke access
+CMD_ENCRYPT = Token.D4  # 00100 — mark encrypted
+
+CMD_NAMES = {
+    CMD_AUTH: 'AUTH', CMD_GRANT_R: 'GRANT_R', CMD_GRANT_W: 'GRANT_W',
+    CMD_REVOKE: 'REVOKE', CMD_ENCRYPT: 'ENCRYPT',
+}
+
+CMD_TOKENS = set(CMD_NAMES.keys())
+
 # Control tokens
 CONTROL_TOKENS: Set[Token] = {Token.START, Token.END, Token.RECORD, Token.CHECKSUM}
 
@@ -188,6 +205,7 @@ class ParserState(IntEnum):
     WORD = 1
     SPECIAL = 2   # START-in-WORD: lowercase a-z, @, -
     SPECIAL2 = 3  # START-in-SPECIAL: ! " # $ % & ' ( ) * + , / : ; < = > ? [ \ ] ^ _ ` { | }
+    SPECIAL3 = 4  # START-in-SPECIAL2: control commands (AUTH, GRANT, REVOKE)
 
 
 @dataclass
@@ -418,6 +436,24 @@ class Encoder:
         tokens.append(Token.RECORD)
         return tokens
 
+    @staticmethod
+    def encode_command(cmd: str, arg: int) -> List[Token]:
+        """Encode a SPECIAL3 control command with argument.
+        cmd: 'AUTH', 'GRANT_R', 'GRANT_W', 'REVOKE', 'ENCRYPT'
+        Depth: NUM → WORD → SPECIAL → SPECIAL2 → SPECIAL3
+        """
+        cmd_map = {'AUTH': CMD_AUTH, 'GRANT_R': CMD_GRANT_R, 'GRANT_W': CMD_GRANT_W,
+                   'REVOKE': CMD_REVOKE, 'ENCRYPT': CMD_ENCRYPT}
+        if cmd not in cmd_map:
+            raise ValueError(f"Unknown command: {cmd}")
+        return [
+            Token.START, Token.START, Token.START, Token.START,  # NUM→WORD→SPECIAL→SPECIAL2→SPECIAL3
+            cmd_map[cmd],                                           # the command token
+            Token.END, Token.END, Token.END, Token.END,            # pop SPECIAL3→SPECIAL2→SPECIAL→WORD
+            *Encoder.encode_integer(arg),                           # the argument
+            Token.END,                                              # WORD→NUM
+        ]
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # 4. DECODER / PARSER — Finite state machine
@@ -505,6 +541,19 @@ class Parser:
         text = ''.join(chars)
         parsed = ParsedWord(characters=chars, text=text)
         self.output.append(parsed)
+        self.accumulator = []
+
+    def _finalize_command(self):
+        """Convert accumulated SPECIAL3 command tokens into a ParsedCommand."""
+        if not self.accumulator:
+            return
+        cmd_token = Token(self.accumulator[0])
+        if cmd_token in CMD_NAMES:
+            self.output.append({
+                'type': 'command',
+                'cmd': CMD_NAMES[cmd_token],
+                'token': cmd_token,
+            })
         self.accumulator = []
 
     def _emit_record(self):
@@ -636,11 +685,34 @@ class Parser:
                 self.state = ParserState.NUM
                 emitted = Token.CHECKSUM
             elif token == Token.START:
-                pass
+                self._finalize_special2()
+                self.state = ParserState.SPECIAL3
             elif token in SPECIAL2_CHAR:
                 self.accumulator.append(int(token))
             else:
                 raise ValueError(f"Unexpected token {token.name} in SPECIAL2 state")
+
+        elif self.state == ParserState.SPECIAL3:
+            if token == Token.END:
+                self._finalize_command()
+                self.state = ParserState.SPECIAL2
+                emitted = Token.END
+            elif token == Token.RECORD:
+                self._finalize_command()
+                self.state = ParserState.NUM
+                self._emit_record()
+                emitted = Token.RECORD
+            elif token == Token.CHECKSUM:
+                self._finalize_command()
+                self.state = ParserState.NUM
+                emitted = Token.CHECKSUM
+            elif token == Token.START:
+                pass  # deepest context — no further nesting
+            elif token in CMD_TOKENS:
+                # Command token: store it, next NUM will be the argument
+                self.accumulator.append(int(token))
+            else:
+                raise ValueError(f"Unexpected token {token.name} in SPECIAL3 state")
 
         return emitted
 
@@ -663,6 +735,8 @@ class Parser:
             self._finalize_special()
         elif self.state == ParserState.SPECIAL2:
             self._finalize_special2()
+        elif self.state == ParserState.SPECIAL3:
+            self._finalize_command()
 
     def reassemble(self):
         """Reassemble fragmented words: merge consecutive WORD tokens, drop empties."""
