@@ -166,12 +166,13 @@ class AllocGrid:
     # ── Alloc table operations ───────────────────────────────────────────
 
     def _read_alloc_entry(self, record_id: int) -> AllocEntry:
-        """Read one entry from the allocation table. O(1)."""
+        """Read one entry from the allocation table. O(1). Uses persistent fd."""
         offset = ALLOC_HEADER_SIZE + record_id * ALLOC_ENTRY_SIZE
 
-        with open(self.alloc_path, 'rb') as f:
-            f.seek(offset)
-            raw = f.read(ALLOC_ENTRY_SIZE)
+        if self._alloc_fd is None:
+            self._alloc_fd = os.open(self.alloc_path, os.O_RDWR)
+        os.lseek(self._alloc_fd, offset, os.SEEK_SET)
+        raw = os.read(self._alloc_fd, ALLOC_ENTRY_SIZE)
 
         if len(raw) < ALLOC_ENTRY_SIZE:
             # Past end of file → free

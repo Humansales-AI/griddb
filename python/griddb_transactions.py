@@ -216,8 +216,8 @@ class Transaction:
 class TransactionalGrid:
     """AllocGrid with WAL-backed transactions. Writes are durable immediately."""
 
-    def __init__(self, data_dir: str = "./data"):
-        self.grid = AllocGrid(data_dir=data_dir)
+    def __init__(self, data_dir: str = "./data", cache_size: int = 0):
+        self.grid = AllocGrid(data_dir=data_dir, cache_size=cache_size)
         self.wal = TxnWAL(data_dir=data_dir)
         self._active: Optional[Transaction] = None
         self._txn_count = 0

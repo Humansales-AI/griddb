@@ -191,7 +191,7 @@ SQLite has 50 years of optimization, a page cache, B-tree, and WAL mode. 5bit is
 
 | Operation | 5bit | SQLite (WAL) |
 |---|---|---|
-| Point read (O(1) alloc) | ~120µs uncached / ~2µs cached (LRU) | ~50µs (page cache) |
+| Point read (O(1) alloc) | ~83µs uncached / ~5µs cached (LRU, working set in RAM) / ~95µs thrash | ~6µs (page cache) |
 | Write (group commit, fsync'd) | ~630µs amortized (~1,580/s) | ~50µs amortized (~20,000/s) |
 | Compaction | Manual, O(n) scan | Auto, background |
 | Schema overhead | **0 bytes** | ~4 bytes/row |
@@ -201,6 +201,8 @@ SQLite has 50 years of optimization, a page cache, B-tree, and WAL mode. 5bit is
 | Audit trail | Append-only, every write permanent | ✗ (VACUUM reclaims) |
 
 5bit is not faster than SQLite. It's deterministic, content-addressed, and schema-free — properties SQLite physically cannot provide. Different tools for different jobs.
+
+*Cached reads match SQLite (~5µs both) when the working set fits in the LRU cache. When data exceeds cache (thrash), 5bit returns to ~95µs/read while SQLite's B-tree degrades more gracefully via its page cache. Enable the cache with `AllocGrid("./data", cache_size=1000)`.*
 
 ---
 
