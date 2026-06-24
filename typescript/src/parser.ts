@@ -7,6 +7,19 @@ import {
   DIGIT_TOKENS, NUMERIC_OPERATORS, NUMERIC_ANNOTATIONS, isDigitToken,
 } from './tokens';
 
+// SPECIAL3 command tokens (same values as Python)
+import { Token as T } from './types';
+const CMD_AUTH = T.D0;
+const CMD_GRANT_R = T.D1;
+const CMD_GRANT_W = T.D2;
+const CMD_REVOKE = T.D3;
+const CMD_ENCRYPT = T.D4;
+const CMD_TOKENS = new Set([CMD_AUTH, CMD_GRANT_R, CMD_GRANT_W, CMD_REVOKE, CMD_ENCRYPT]);
+const CMD_NAMES: Record<number, string> = {
+  [CMD_AUTH]: 'AUTH', [CMD_GRANT_R]: 'GRANT_R', [CMD_GRANT_W]: 'GRANT_W',
+  [CMD_REVOKE]: 'REVOKE', [CMD_ENCRYPT]: 'ENCRYPT',
+};
+
 export class Parser {
   state: ParserState = ParserState.NUM;
   accumulator: number[] = [];
@@ -57,6 +70,15 @@ export class Parser {
     this.accumulator = [];
   }
 
+  private finalizeSpecial3(): void {
+    if (this.accumulator.length === 0) return;
+    const cmd = this.accumulator[0] as number;
+    if (CMD_NAMES[cmd]) {
+      this.output.push({ type: 'command', cmd: CMD_NAMES[cmd] } as any);
+    }
+    this.accumulator = [];
+  }
+
   private emitRecord(): void {
     const recordTokens = this.output.slice(this.currentRecordStart);
     this.records.push({ tokens: [...recordTokens], bitOffset: this.currentRecordStart * 5 });
@@ -101,9 +123,17 @@ export class Parser {
       if (token === Token.END) { this.finalizeSpecial2(); this.state = ParserState.SPECIAL; emitted = { type: 'control', token: Token.END }; }
       else if (token === Token.RECORD) { this.finalizeSpecial2(); this.state = ParserState.NUM; this.emitRecord(); emitted = { type: 'control', token: Token.RECORD }; }
       else if (token === Token.CHECKSUM) { this.finalizeSpecial2(); this.state = ParserState.NUM; emitted = { type: 'control', token: Token.CHECKSUM }; }
-      else if (token === Token.START) { /* no deeper context */ }
+      else if (token === Token.START) { this.finalizeSpecial2(); this.state = ParserState.SPECIAL3; /* START-in-SPECIAL2 → SPECIAL3 */ }
       else if (SPECIAL2_CHAR.has(token)) { this.accumulator.push(token as number); }
       else throw new Error(`Unexpected token ${Token[token]} in SPECIAL2 state`);
+
+    } else if (this.state === ParserState.SPECIAL3) {
+      if (token === Token.END) { this.finalizeSpecial3(); this.state = ParserState.SPECIAL2; emitted = { type: 'control', token: Token.END }; }
+      else if (token === Token.RECORD) { this.finalizeSpecial3(); this.state = ParserState.NUM; this.emitRecord(); emitted = { type: 'control', token: Token.RECORD }; }
+      else if (token === Token.CHECKSUM) { this.finalizeSpecial3(); this.state = ParserState.NUM; emitted = { type: 'control', token: Token.CHECKSUM }; }
+      else if (token === Token.START) { /* deepest context */ }
+      else if (CMD_TOKENS.has(token)) { this.accumulator = [token as number]; }
+      else throw new Error(`Unexpected token ${Token[token]} in SPECIAL3 state`);
     }
     return emitted;
   }
@@ -119,6 +149,7 @@ export class Parser {
     else if (this.state === ParserState.WORD) this.finalizeWord();
     else if (this.state === ParserState.SPECIAL) this.finalizeSpecial();
     else if (this.state === ParserState.SPECIAL2) this.finalizeSpecial2();
+    else if (this.state === ParserState.SPECIAL3) this.finalizeSpecial3();
   }
 
   /** Reassemble fragmented words: merge consecutive WORD tokens, drop empties. */
