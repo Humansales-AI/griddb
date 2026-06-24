@@ -87,55 +87,35 @@ class ServerGrid(PerUserGrid):
         # (in production: re-encrypt with user-only key)
         self._append_command(record_id, 'SERVER_REVOKE')
 
-    def _append_command(self, record_id: int, cmd: str):
-        """Append a SPECIAL3 command token to the record."""
-        rec = super().read(record_id)
-        if not rec: return
-        tokens = list(rec.tokens)
-        # Insert command token before RECORD
-        cmd_map = {'SERVER_READ': 0, 'SERVER_INDEX': 1, 'SERVER_REVOKE': 2}
-        cmd_val = cmd_map.get(cmd, 0)
-        cmd_tokens = Encoder.encode_integer(cmd_val)
-        tokens = tokens[:-1] + cmd_tokens + [Token.RECORD]
-        super().write(record_id, tokens)
+    # ── Grants stored as SEPARATE plaintext records ─────────────────────
+    GRANT_BASE = 60_000_000
+
+    def grant_server_read(self, record_id: int):
+        """Store grant as a separate plaintext record. User must be unlocked."""
+        self._require_key()
+        grant_rid = self.GRANT_BASE + record_id
+        AllocGrid.write(self, grant_rid, [Token.D0, Token.END, Token.RECORD])
+
+    def _has_grant(self, record_id: int) -> bool:
+        """Check if record has a SERVER_READ grant."""
+        grant_rid = self.GRANT_BASE + record_id
+        rec = AllocGrid.read(self, grant_rid)
+        return rec is not None and not rec.is_tombstone
 
     # ── Server-side read ────────────────────────────────────────────────
 
     def read_as_server(self, user_id: int, record_id: int) -> Optional[AllocRecord]:
-        """Server reads a record. Requires SERVER_READ grant + server_key."""
+        """Server reads. Requires grant + server_key."""
         if not self._server_key:
             raise PermissionError("Server key not configured")
-
-        rec = AllocGrid.read(self, record_id)  # Grandparent — bypass user key check
-        if not rec or rec.is_tombstone: return None
-
-        # Check for SERVER_READ grant in token stream
-        if not self._has_server_grant(rec.tokens, 'SERVER_READ'):
-            raise PermissionError(
-                f"Record {record_id}: no SERVER_READ grant from user")
-
-        # Derive recovery key = HKDF(user_key || server_key)
-        # But we don't have the user_key here — server needs a recovery path.
-        # The server stores a recovery blob: user_key encrypted with server_key
+        if not self._has_grant(record_id):
+            raise PermissionError(f"Record {record_id}: no SERVER_READ grant")
         recovery_key = self._get_recovery_key(user_id)
         if not recovery_key:
             raise PermissionError(f"No recovery key for user {user_id}")
-
+        rec = AllocGrid.read(self, record_id)
+        if not rec or rec.is_tombstone: return None
         return self._decrypt_with_key(rec, recovery_key, record_id)
-
-    def _has_server_grant(self, tokens: List[Token], grant: str) -> bool:
-        """Check if the token stream contains a server grant (encoded as NUM)."""
-        cmd_map = {'SERVER_READ': 0, 'SERVER_INDEX': 1, 'SERVER_REVOKE': 2}
-        expected = cmd_map.get(grant, -1)
-        parser = Parser()
-        for t in tokens: parser.feed(t)
-        parser.finalize()
-        for p in parser.output:
-            if isinstance(p, ParsedNumber):
-                # Check if any number matches the grant code
-                if p.value == expected:
-                    return True
-        return False
 
     # ── Recovery key (password reset / admin access) ────────────────────
 
@@ -186,10 +166,10 @@ class ServerGrid(PerUserGrid):
         recovery_key = self._get_recovery_key(user_id)
         if not recovery_key:
             raise PermissionError(f"No recovery key for user {user_id}")
+        if not self._has_grant(record_id):
+            raise PermissionError("No SERVER_READ grant")
         rec = AllocGrid.read(self, record_id)
         if not rec: return None
-        if not self._has_server_grant(rec.tokens, 'SERVER_READ'):
-            raise PermissionError("No SERVER_READ grant")
         return self._decrypt_with_key(rec, recovery_key, record_id)
 
     def _decrypt_with_key(self, rec: AllocRecord, key: bytes,
