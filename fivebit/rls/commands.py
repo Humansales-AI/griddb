@@ -1,18 +1,19 @@
 """
-5bit Command RLS — Token-Level Access Control
-===============================================
-RLS enforced by SPECIAL3 control commands in the token fabric.
-No encryption overhead. No wrapper. Just token comparisons at parse time.
+5bit Command RLS — Token-Level Permission Representation
+==========================================================
+SPECIAL3 commands (AUTH, GRANT, REVOKE) embedded in the token stream.
+These are a *representation* of intended permissions, not enforcement.
 
-A record with AUTH(user_id) in its token stream can only be read
-by that user. The parser checks on every read.
+Honest: a raw AllocGrid on the same directory reads everything.
+The AUTH token says "user 1 owns this" — it does not prevent reading.
+For actual enforcement, combine with CryptoRLS (v5.3) for encryption.
 
 Usage:
   from fivebit.rls.commands import CommandRLS
   grid = CommandRLS("./data")
-  grid.write_owned(42, user_id=1, tokens=[...])    # record owned by user 1
-  grid.read(42, user_id=1)  # ✓
-  grid.read(42, user_id=2)  # ✗ PermissionDenied
+  grid.write_owned(42, user_id=1, tokens=[...])    # AUTH tag prepended
+  grid.read(42, user_id=1)  # ✓ checks AUTH tag
+  grid.read(42, user_id=2)  # ✗ PermissionDenied (in-process only)
 """
 import os, sys
 from typing import List, Optional
@@ -39,35 +40,48 @@ class CommandRLS(AllocGrid):
         return super().write(record_id, cmd_tokens + tokens)
 
     def read(self, record_id: int, user_id: int = 0) -> Optional[AllocRecord]:
-        """Read with RLS check. Parses commands from the token stream."""
+        """Read with RLS check. Parses AUTH + GRANT commands."""
         rec = super().read(record_id)
-        if not rec or rec.is_tombstone:
-            return None
-
-        # Parse commands from the record's token stream
-        owner = self._get_owner_from_tokens(rec.tokens)
-        if owner is not None and owner != user_id and self._bypass_user is None:
+        if not rec or rec.is_tombstone: return None
+        perms = self._parse_commands(rec.tokens)
+        owner = perms.get('owner')
+        grantees = perms.get('grantees', set())
+        if owner is not None and user_id != owner and user_id not in grantees and self._bypass_user is None:
             raise PermissionDenied(
                 f"CommandRLS: user {user_id} cannot read record {record_id} (owner={owner})")
         return rec
 
-    def _get_owner_from_tokens(self, tokens: List[Token]) -> Optional[int]:
-        """Parse SPECIAL3 commands to find the AUTH owner."""
+    def _parse_commands(self, tokens: List[Token]) -> dict:
+        """Parse SPECIAL3 commands to extract owner + grantees."""
+        result = {'owner': None, 'grantees': set()}
         parser = Parser()
-        for t in tokens:
-            parser.feed(t)
+        for t in tokens: parser.feed(t)
         parser.finalize()
-        # Look for command tokens in output
+        cmd = None
         for p in parser.output:
             if isinstance(p, dict) and p.get('type') == 'command':
-                if p.get('cmd') == 'AUTH':
-                    # Find the next NUM after the command
-                    # The argument comes after the command in the token stream
-                    cmd_idx = parser.output.index(p)
-                    for q in parser.output[cmd_idx:]:
-                        if isinstance(q, ParsedNumber):
-                            return q.value
-        return None
+                cmd = p.get('cmd')
+                continue
+            if cmd and isinstance(p, ParsedNumber):
+                if cmd == 'AUTH': result['owner'] = p.value
+                elif cmd == 'GRANT_R': result['grantees'].add(p.value)
+                elif cmd == 'REVOKE': result['grantees'].discard(p.value)
+                cmd = None
+        return result
+
+    def grant_read(self, record_id: int, user_id: int, grantee_id: int):
+        """Append a GRANT_R command to the record."""
+        rec = super().read(record_id)
+        if not rec: return
+        cmd = Encoder.encode_command('GRANT_R', grantee_id)
+        self.write_owned(record_id, user_id, rec.tokens + cmd)
+
+    def revoke_read(self, record_id: int, user_id: int, target_id: int):
+        """Append a REVOKE command to the record."""
+        rec = super().read(record_id)
+        if not rec: return
+        cmd = Encoder.encode_command('REVOKE', target_id)
+        self.write_owned(record_id, user_id, rec.tokens + cmd)
 
     def delete(self, record_id: int, user_id: int = 0) -> bool:
         self.read(record_id, user_id)  # Verify ownership
