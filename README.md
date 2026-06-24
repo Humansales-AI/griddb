@@ -96,11 +96,24 @@ The parser starts in **NUM** state. Four control tokens navigate the stack:
 | `START` (11111) | NUM | Enter WORD |
 | `START` (11111) | WORD | Enter SPECIAL |
 | `START` (11111) | SPECIAL | Enter SPECIAL2 |
+| `START` (11111) | SPECIAL2 | Enter SPECIAL3 (control commands) |
+| `END` (11110) | SPECIAL3 | Pop to SPECIAL2 |
 | `END` (11110) | SPECIAL2 | Pop to SPECIAL |
 | `END` (11110) | SPECIAL | Pop to WORD |
 | `END` (11110) | WORD | Pop to NUM (finalize) |
 | `RECORD` (11100) | Any | Finalize, emit record boundary, pop to NUM |
 | `CHECKSUM` (11101) | Any | Emit integrity marker |
+
+**SPECIAL3 — Control Commands (token-level RLS):**
+
+The 28 slots at SPECIAL3 depth map to control commands instead of characters:
+`AUTH(uid)`, `GRANT_R(uid)`, `GRANT_W(uid)`, `REVOKE(uid)`, `ENCRYPT(key_id)`.
+
+```
+"AUTH user 42" → START×4  CMD_AUTH  D4 D2 END  END×5    (5 STARTs to reach SPECIAL3)
+```
+
+These are permission *representations* in the token fabric. Combine with encryption for enforcement.
 
 **Encoding examples:**
 
