@@ -139,7 +139,7 @@ class StorageServer:
         # Owner check — FAIL CLOSED
         stored_owner = self._get_owner(rid)
         if stored_owner < 0: return None  # No owner set = reject
-        if self._owner_id is not None and stored_owner != self._owner_id:
+        if self._owner_id is None or stored_owner != self._owner_id:
             return None
 
         data = bytearray()
