@@ -144,7 +144,100 @@ class APIHandler(BaseHTTPRequestHandler):
                 self._send(200, {'results': results, 'count': len(results)})
                 return
 
+        # GET /query?filter=age:gt:21&aggregate=count
+        if path == '/query':
+            self._handle_query(params)
+            return
+
         self._send(404, {'error': 'Not found'})
+
+    def _handle_query(self, params: dict):
+        """Single-pass scan with filters + aggregates."""
+        filters = self._parse_filters(params.get('filter', []))
+        aggs = params.get('aggregate', [])
+
+        # Collect matching records
+        results = []
+        fields = self.spec.get('fields', [])
+        for rid in range(min(self.grid.total_entries, 100000)):
+            rec = self.grid.read(rid)
+            if not rec or rec.is_tombstone: continue
+            record = self._record_to_dict(rec, fields)
+            if self._matches_filters(record, filters):
+                results.append(record)
+
+        # Compute aggregates
+        output = {'count': len(results)}
+        for agg in aggs:
+            parts = agg.split(':')
+            op = parts[0]  # count, sum, avg, min, max
+            field = parts[1] if len(parts) > 1 else None
+            vals = [r[field] for r in results if field and field in r and isinstance(r[field], (int, float))]
+            if op == 'count':
+                output['count'] = len(results)
+            elif op == 'sum' and vals:
+                output[f'sum_{field}'] = sum(vals)
+            elif op == 'avg' and vals:
+                output[f'avg_{field}'] = sum(vals) / len(vals)
+            elif op == 'min' and vals:
+                output[f'min_{field}'] = min(vals)
+            elif op == 'max' and vals:
+                output[f'max_{field}'] = max(vals)
+
+        self._send(200, output)
+
+    def _parse_filters(self, filter_list: list) -> list:
+        """Parse filter strings like 'age:gt:21' into structured filters."""
+        filters = []
+        for f in filter_list:
+            parts = f.split(':')
+            if len(parts) == 3:
+                filters.append({'field': parts[0], 'op': parts[1], 'value': parts[2]})
+            elif len(parts) == 2:
+                filters.append({'field': parts[0], 'op': 'eq', 'value': parts[1]})
+        return filters
+
+    def _matches_filters(self, record: dict, filters: list) -> bool:
+        for f in filters:
+            val = record.get(f['field'])
+            if val is None: return False
+            target = f['value']
+            op = f['op']
+            try:
+                if isinstance(val, (int, float)):
+                    target_num = float(target)
+                    if op == 'eq': return val == target_num
+                    if op == 'gt': return val > target_num
+                    if op == 'gte': return val >= target_num
+                    if op == 'lt': return val < target_num
+                    if op == 'lte': return val <= target_num
+                else:
+                    val_str = str(val).lower()
+                    t_str = target.lower()
+                    if op == 'eq': return val_str == t_str
+                    if op == 'contains': return t_str in val_str
+                    if op == 'startsWith': return val_str.startswith(t_str)
+            except ValueError:
+                return False
+            return True
+        return True
+
+    def _record_to_dict(self, rec, fields: list) -> dict:
+        """Convert record to dict using spec fields."""
+        result = {}
+        vals = []
+        pending = ''
+        for p in rec.parsed:
+            if isinstance(p, ParsedNumber):
+                if pending: vals.append(pending); pending = ''
+                vals.append(p.value)
+            elif isinstance(p, ParsedWord):
+                pending += p.text
+        if pending: vals.append(pending)
+        for i, field in enumerate(fields):
+            if i < len(vals): result[field] = vals[i]
+        result['_id'] = rec.record_id
+        return result
 
     def do_POST(self):
         if self.path == '/records':
