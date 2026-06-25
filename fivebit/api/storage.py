@@ -122,7 +122,7 @@ class StorageServer:
                 results.append({
                     'path': file_path,
                     'size': nums[0] if nums else 0,
-                    'hash': words[3] if len(words) >= 4 else '',
+                    'hash': words[2] if len(words) >= 3 else '',
                     'owner': nums[1] if len(nums) >= 2 else 0,
                 })
                 if len(results) >= limit: break
@@ -132,4 +132,4 @@ class StorageServer:
 
     def _extract_hash(self, rec: AllocRecord) -> str:
         words = [p.text for p in rec.parsed if isinstance(p, ParsedWord)]
-        return words[3] if len(words) >= 4 else ''
+        return words[2] if len(words) >= 3 else ''
