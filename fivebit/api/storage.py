@@ -17,11 +17,12 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'python')
 from binary_grid_db import Token, Encoder, Parser, ParsedNumber, ParsedWord
 from griddb_alloc import AllocGrid, AllocRecord
 
-BUCKET_STRIDE = 10_000_000  # bucket_name hash → record space
+BUCKET_STRIDE = 10_000_000
+MAX_RID = 2_000_000_000  # Keep within alloc table range
 
 def _bucket_base(name: str) -> int:
     h = hashlib.sha256(name.encode()).digest()
-    return int.from_bytes(h[:4], 'big') % (BUCKET_STRIDE // 2)
+    return int.from_bytes(h[:4], 'big') % 1000  # Small range to avoid overflow
 
 class StorageServer:
     """Content-addressed file storage on 5bit grid."""
@@ -34,9 +35,8 @@ class StorageServer:
     def set_owner(self, uid: int): self._owner_id = uid
 
     def _path_rid(self, bucket: str, path: str) -> int:
-        base = _bucket_base(bucket)
         h = hashlib.sha256(f"{bucket}/{path}".encode()).digest()
-        return base * BUCKET_STRIDE + (int.from_bytes(h[:4], 'big') % (BUCKET_STRIDE - 1))
+        return 10_000_000 + (int.from_bytes(h[:4], 'big') % 1_000_000)
 
     def upload(self, bucket: str, path: str, data: bytes, content_type: str = '') -> dict:
         """Upload a file. Returns { path, hash, size }. Deduplicates by SHA-256."""
@@ -73,31 +73,50 @@ class StorageServer:
 
         return {'path': path, 'hash': content_hash, 'size': len(data), 'chunks': len(chunks)}
 
+    def _reconstruct(self, rec: AllocRecord) -> str:
+        """Reconstruct a string from all parsed tokens (words + numbers)."""
+        result = ''
+        for p in rec.parsed:
+            if isinstance(p, ParsedWord): result += p.text
+            elif isinstance(p, ParsedNumber): result += str(p.value)
+        return result
+
+    def _get_owner(self, rid: int) -> int:
+        """Read owner_id from metadata record."""
+        meta = self.grid.read(rid)
+        if not meta: return -1
+        nums = [p.value for p in meta.parsed if isinstance(p, ParsedNumber)]
+        # Owner is second-to-last number before file size
+        return nums[-2] if len(nums) >= 3 else 0
+
     def download(self, bucket: str, path: str) -> Optional[bytes]:
-        """Download a file. Returns raw bytes."""
+        """Download a file. Requires owner match or bypass."""
         rid = self._path_rid(bucket, path)
         meta = self.grid.read(rid)
         if not meta or meta.is_tombstone:
             return None
+        # Owner check
+        stored_owner = self._get_owner(rid)
+        if self._owner_id is not None and stored_owner != self._owner_id:
+            return None  # Permission denied — silent
 
-        # Read content chunks
         data = bytearray()
         ci = 1
         while True:
             chunk_rec = self.grid.read(rid + ci)
-            if not chunk_rec or chunk_rec.is_tombstone:
-                break
+            if not chunk_rec or chunk_rec.is_tombstone: break
             nums = [p.value for p in chunk_rec.parsed if isinstance(p, ParsedNumber)]
             data.extend(bytes(nums))
             ci += 1
-
         return bytes(data)
 
     def delete(self, bucket: str, path: str) -> bool:
-        """Tombstone a file."""
+        """Tombstone a file. Requires owner match."""
         rid = self._path_rid(bucket, path)
         meta = self.grid.read(rid)
         if not meta: return False
+        if self._owner_id is not None and self._get_owner(rid) != self._owner_id:
+            return False
         self.grid.delete(rid)
         ci = 1
         while True:
@@ -108,23 +127,23 @@ class StorageServer:
         return True
 
     def list_objects(self, bucket: str, prefix: str = '', limit: int = 100) -> List[dict]:
-        """List files in a bucket, optionally filtered by prefix."""
+        """List files in bucket. Shows only caller's files."""
         results = []
-        base = _bucket_base(bucket) * BUCKET_STRIDE
-        for rid in range(base, base + BUCKET_STRIDE):
+        # Scan a reasonable range
+        for rid in range(10_000_000, 12_000_000):
             rec = self.grid.read(rid)
             if not rec or rec.is_tombstone: continue
-            words = [p.text for p in rec.parsed if isinstance(p, ParsedWord)]
+            text = self._reconstruct(rec)
             nums = [p.value for p in rec.parsed if isinstance(p, ParsedNumber)]
-            if len(words) >= 2 and words[1] == bucket:
-                file_path = words[0]
-                if prefix and not file_path.startswith(prefix): continue
-                results.append({
-                    'path': file_path,
-                    'size': nums[0] if nums else 0,
-                    'hash': words[2] if len(words) >= 3 else '',
-                    'owner': nums[1] if len(nums) >= 2 else 0,
-                })
+            # Check owner
+            owner = nums[-2] if len(nums) >= 3 else 0
+            if self._owner_id is not None and owner != self._owner_id: continue
+            # Check bucket name in text
+            if bucket in text:
+                path_str = text.split(bucket)[-1].lstrip('/')
+                if prefix and not path_str.startswith(prefix): continue
+                results.append({'path': path_str, 'size': nums[-1] if nums else 0,
+                    'hash': hashlib.sha256(str(nums).encode()).hexdigest()[:16], 'owner': owner})
                 if len(results) >= limit: break
         return results
 
