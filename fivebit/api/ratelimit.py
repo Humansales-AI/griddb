@@ -40,8 +40,9 @@ class RateLimiter:
         now = time.time()
         with self.lock:
             bucket = self.buckets[key]
-            # Slide window: drop expired entries
             bucket[:] = [t for t in bucket if now - t < self.window]
+            if not bucket:
+                del self.buckets[key]  # Fix #1: prevent unbounded dict growth
             if len(bucket) >= self.max:
                 return False
             bucket.append(now)
@@ -64,13 +65,16 @@ class RateLimiter:
         cutoff = now - self.window
 
         pipe = self.redis.pipeline()
-        pipe.zremrangebyscore(rkey, 0, cutoff)       # Remove expired
-        pipe.zcard(rkey)                                # Count remaining
-        pipe.zadd(rkey, {str(now): now})                # Add current
-        pipe.expire(rkey, self.window + 10)             # Auto-cleanup
-        _, count, _, _ = pipe.execute()
+        pipe.zremrangebyscore(rkey, 0, cutoff)
+        pipe.zcard(rkey)
+        _, count = pipe.execute()  # Count BEFORE deciding
 
-        return count < self.max
+        if count >= self.max:
+            return False
+        # Only record on allow — matches in-memory behavior
+        self.redis.zadd(rkey, {str(now): now})
+        self.redis.expire(rkey, self.window + 10)
+        return True
 
     def reset(self, key: str):
         """Reset a key's bucket (for testing)."""
@@ -91,13 +95,20 @@ class APIRateLimiter:
         self.user_limiter = RateLimiter(max_req=1000, window=60, redis_url=redis_url)
 
     def check(self, ip: str, user_id: Optional[int] = None) -> tuple:
-        """Returns (allowed: bool, retry_after: int)."""
+        """Returns (allowed: bool, retry_after: int). IP first (cheaper), user second."""
+        # Check IP first — cheaper, prevent quota waste if IP blocked
         if user_id:
-            key = f"user:{user_id}"
-            if not self.user_limiter.allow(key):
-                return False, self.user_limiter.retry_after(key)
+            ip_ok = self.ip_limiter.allow(ip)
+            if not ip_ok:
+                return False, self.ip_limiter.retry_after(ip)
+            # IP passed, now check user
+            user_ok = self.user_limiter.allow(f"user:{user_id}")
+            if not user_ok:
+                # Roll back the IP slot — user blocked doesn't mean IP should be penalized
+                self.ip_limiter.buckets[ip].pop()
+                return False, self.user_limiter.retry_after(f"user:{user_id}")
+            return True, 0
 
         if not self.ip_limiter.allow(ip):
             return False, self.ip_limiter.retry_after(ip)
-
         return True, 0
