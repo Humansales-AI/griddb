@@ -154,12 +154,17 @@ class WebhookManager:
         import http.client, ssl
         for attempt in range(MAX_RETRIES):
             try:
-                # Re-resolve and re-check at delivery time
+                # Resolve once, check, connect to pinned IP (Host header + SNI for name)
                 addr = socket.getaddrinfo(hostname, port)[0][4][0]
                 if any(ipaddress.ip_address(addr) in net for net in BLOCKED_NETS):
                     return  # Blocked at delivery
-                conn = (http.client.HTTPSConnection if scheme == 'https' else http.client.HTTPConnection)(hostname, port, timeout=10)
-                conn.request('POST', '/' + hook['url'].split('/', 3)[-1], body=payload, headers=headers)
+                ctx = ssl.create_default_context() if scheme == 'https' else None
+                conn = http.client.HTTPSConnection(addr, port, context=ctx, timeout=10) if scheme == 'https' \
+                  else http.client.HTTPConnection(addr, port, timeout=10)
+                # Pass original hostname in headers for virtual hosting + SNI
+                headers['Host'] = hostname
+                path = '/' + '/'.join(hook['url'].split('/', 3)[1:])
+                conn.request('POST', path, body=payload, headers=headers)
                 resp = conn.getresponse()
                 if 200 <= resp.status < 300:
                     conn.close(); return
