@@ -61,6 +61,8 @@ class AuthHandler:
             return self._login(body)
         if method == 'POST' and parsed.path == '/api/auth/logout':
             return self._logout(headers)
+        if method == 'POST' and parsed.path == '/api/auth/oauth':
+            return self._oauth(body)
 
         return None  # Not an auth route
 
@@ -107,6 +109,36 @@ class AuthHandler:
             return 200, {'session': {'token': token, 'userId': uid, 'expiresAt': payload['exp']}}
         except Exception as e:
             return 401, {'error': 'Invalid credentials'}
+
+    def _oauth(self, body: bytes):
+        from fivebit.api.oauth import verify_google_token, exchange_github_code, find_or_create_oauth_user
+        try:
+            data = json.loads(body)
+            provider = data.get('provider', '')
+            mode = data.get('mode', 'managed')
+
+            if provider == 'google':
+                id_token = data.get('idToken', '')
+                if not id_token: return 400, {'error': 'idToken required'}
+                profile = verify_google_token(id_token)
+                if not profile: return 401, {'error': 'Invalid Google token'}
+            elif provider == 'github':
+                code = data.get('code', '')
+                client_id = os.environ.get('GITHUB_CLIENT_ID', '')
+                client_secret = os.environ.get('GITHUB_CLIENT_SECRET', '')
+                if not code: return 400, {'error': 'code required'}
+                profile = exchange_github_code(code, client_id, client_secret)
+                if not profile: return 401, {'error': 'Invalid GitHub code'}
+            else:
+                return 400, {'error': f'Unknown provider: {provider}'}
+
+            uid = find_or_create_oauth_user(self.grid, provider, profile['sub'],
+                                             profile.get('email', ''), profile.get('name', ''), mode)
+            payload = {'sub': uid, 'iat': int(time.time()), 'exp': int(time.time() + SESSION_DURATION)}
+            token = _sign(payload)
+            return 200, {'session': {'token': token, 'userId': uid, 'expiresAt': payload['exp']}}
+        except Exception as e:
+            return 401, {'error': str(e)}
 
     def _logout(self, headers: dict):
         token = _bearer_token(headers)
