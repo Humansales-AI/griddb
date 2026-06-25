@@ -173,18 +173,19 @@ class StorageServer:
         """List files in bucket. Shows only caller's files."""
         results = []
         # Scan a reasonable range
-        for rid in range(10_000_000, 12_000_000):
+        max_rid = min(self.grid.total_entries, 12_000_000)
+        for rid in range(10_000_000, max_rid):
             rec = self.grid.read(rid)
             if not rec or rec.is_tombstone: continue
             owner = self._get_owner(rid)
             if owner < 0: continue  # No owner set = skip
             if self._owner_id is None or owner != self._owner_id: continue
-            # Check bucket name in text
+            text = self._reconstruct(rec)
+            nums = [p.value for p in rec.parsed if isinstance(p, ParsedNumber)]
             if bucket in text:
-                path_str = text.split(bucket)[-1].lstrip('/')
-                if prefix and not path_str.startswith(prefix): continue
+                path_str = text.split(bucket, 1)[-1].lstrip('/') if bucket in text else ''
                 results.append({'path': path_str, 'size': nums[-1] if nums else 0,
-                    'hash': hashlib.sha256(str(nums).encode()).hexdigest()[:16], 'owner': owner})
+                    'hash': hashlib.sha256(text.encode()).hexdigest()[:16], 'owner': owner})
                 if len(results) >= limit: break
         return results
 
