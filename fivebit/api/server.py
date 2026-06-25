@@ -165,17 +165,48 @@ class APIHandler(BaseHTTPRequestHandler):
             self._handle_query(params)
             return
 
+        # GET /replica/sync?since=<seq>
+        if path == '/replica/sync':
+            self._handle_sync(params)
+            return
+
         self._send(404, {'error': 'Not found'})
 
+    def _handle_sync(self, params: dict):
+        """Replication endpoint — WAL entries since sequence number."""
+        since = int(params.get('since', [0])[0])
+        try:
+            from griddb_replication import ReplicationMaster
+            master = ReplicationMaster(data_dir=self.grid.data_dir)
+            entries = master.getEntriesSince(since)
+            self._send(200, {'entries': entries, 'count': len(entries)})
+        except Exception as e:
+            self._send(500, {'error': str(e)})
+
     def _handle_query(self, params: dict):
-        """Single-pass scan with filters + aggregates."""
+        """Query with filters + aggregates. Uses B-tree index when available."""
         filters = self._parse_filters(params.get('filter', []))
         aggs = params.get('aggregate', [])
 
-        # Collect matching records
+        # Try B-tree index for range queries on indexed fields
+        indexed_rids = None
+        for f in filters:
+            idx = self._indexes.get(f['field'])
+            if idx and f['op'] in ('gt', 'gte', 'lt', 'lte'):
+                try:
+                    v = int(f['value'])
+                    if f['op'] in ('gt', 'gte'):
+                        scanned = idx.rangeScan(v + (0 if f['op'] == 'gt' else 0), 10**9)
+                    else:
+                        scanned = idx.rangeScan(-10**9, v + (1 if f['op'] == 'lt' else 0))
+                    indexed_rids = set(scanned) if indexed_rids is None else indexed_rids & set(scanned)
+                except: pass
+
+        # Collect matching records (indexed or full scan)
         results = []
         fields = self.spec.get('fields', [])
-        for rid in range(min(self.grid.total_entries, 100000)):
+        rids_to_check = indexed_rids if indexed_rids is not None else range(min(self.grid.total_entries, 100000))
+        for rid in rids_to_check:
             rec = self.grid.read(rid)
             if not rec or rec.is_tombstone: continue
             record = self._record_to_dict(rec, fields)
@@ -354,9 +385,23 @@ class APIServer:
         APIHandler.spec = spec
         from fivebit.api.ratelimit import APIRateLimiter
         APIHandler.rate_limiter = APIRateLimiter()
+        # B-tree indexes — one per numeric field in spec
+        self._indexes = {}
+        for f in spec.get('fields', []):
+            try:
+                from griddb_index import BTreeIndex
+                self._indexes[f] = BTreeIndex(f, data_dir=data_dir)
+            except ImportError: pass
 
     def _broadcast_change(self, table: str, event_type: str, record: dict):
-        """Notify realtime subscribers of data changes (WebSocket + WAL)."""
+        """Notify realtime subscribers + update B-tree indexes."""
+        # Update indexes
+        rid = record.get('_id', 0)
+        for field, idx_obj in getattr(self, '_indexes', {}).items():
+            val = record.get(field)
+            if isinstance(val, (int, float)) and rid:
+                try: idx_obj.put(int(val), rid)
+                except: pass
         if self.realtime:
             try:
                 self.realtime.broadcast_change(table, {'type': event_type, 'record': record})
