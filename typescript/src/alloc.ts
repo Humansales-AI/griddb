@@ -259,6 +259,16 @@ export class AllocGrid {
     fs.closeSync(fd);
   }
 
+  /** Reconstruct a string from ALL parsed tokens — words + numbers + specials. */
+  static reconstructAll(parsed: ParsedToken[]): string {
+    let result = '';
+    for (const p of parsed) {
+      if (p.type === 'word') result += (p as any).text;
+      else if (p.type === 'number') result += String((p as any).value);
+    }
+    return result;
+  }
+
   close(): void {}
   get dataEndVal(): number { return this.dataEnd; }
   set dataEndVal(v: number) { this.dataEnd = v; }
