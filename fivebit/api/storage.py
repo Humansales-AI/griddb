@@ -134,16 +134,24 @@ class StorageServer:
         return {'path': path, 'hash': content_hash, 'size': len(data), 'chunks': len(chunks)}
 
     def _index_add(self, bucket: str, path: str):
-        """Add a path to the bucket's index record for O(1) listing."""
+        """Append path to bucket index — one record per path, append-friendly."""
         bucket_hash = hashlib.sha256(bucket.encode()).hexdigest()[:8]
-        idx_rid = self.INDEX_OFFSET + int(bucket_hash, 16) % 100_000
-        existing = self.grid.read(idx_rid)
-        paths = self._reconstruct(existing).split('\n') if existing and not existing.is_tombstone else []
-        if path not in paths:
-            paths.append(path)
-            self.grid.write(idx_rid, [
-                *Encoder.encode_word('\n'.join(paths)), Token.RECORD,
-            ])
+        base = self.INDEX_OFFSET + (int(bucket_hash, 16) % 100_000) * 1000
+        i = 0
+        while self.grid.read(base + i): i += 1
+        self.grid.write(base + i, [*Encoder.encode_word(path), Token.RECORD])
+
+    def _index_list(self, bucket: str) -> List[str]:
+        """Read all paths from the bucket's per-record index."""
+        bucket_hash = hashlib.sha256(bucket.encode()).hexdigest()[:8]
+        base = self.INDEX_OFFSET + (int(bucket_hash, 16) % 100_000) * 1000
+        paths = []
+        for i in range(1000):
+            rec = self.grid.read(base + i)
+            if not rec or rec.is_tombstone: continue
+            path = self._reconstruct(rec)
+            if path: paths.append(path)
+        return paths
 
     def download(self, bucket: str, path: str) -> Optional[bytes]:
         """Download a file. Owner check enforced."""
@@ -187,11 +195,7 @@ class StorageServer:
     def list_objects(self, bucket: str, prefix: str = '', limit: int = 100) -> List[dict]:
         """List files in bucket. O(1) via per-bucket index."""
         results = []
-        bucket_hash = hashlib.sha256(bucket.encode()).hexdigest()[:8]
-        idx_rid = self.INDEX_OFFSET + int(bucket_hash, 16) % 100_000
-        idx_rec = self.grid.read(idx_rid)
-        if not idx_rec or idx_rec.is_tombstone: return results
-        paths = self._reconstruct(idx_rec).split('\n')
+        paths = self._index_list(bucket)
         for path in paths:
             if not path: continue
             if prefix and not path.startswith(prefix): continue
