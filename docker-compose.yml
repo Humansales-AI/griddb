@@ -1,0 +1,27 @@
+version: "3.8"
+
+services:
+  api:
+    build: .
+    ports: ["8080:8080"]
+    volumes: ["./data:/data"]
+    environment:
+      - FIVEBIT_JWT_SECRET=${FIVEBIT_JWT_SECRET:-dev-secret-change-me}
+      - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID:-}
+      - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET:-}
+    command: python3 -c "
+from fivebit.api.server import APIServer
+import os, json
+spec = json.loads(os.environ.get('FIVEBIT_SPEC', '{\"name\":\"records\",\"fields\":[\"value\"]}'))
+APIServer('/data', spec, port=8080, cache_size=1000).start(True)
+"
+
+  realtime:
+    build: .
+    ports: ["8081:8081"]
+    volumes: ["./data:/data"]
+    command: python3 -c "
+from fivebit.api.realtime import RealtimeServer
+import asyncio
+asyncio.run(RealtimeServer('/data', 8081).start_ws())
+"
