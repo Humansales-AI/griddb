@@ -195,25 +195,12 @@ class Transaction:
         if self._on_done: self._on_done()
 
     def _apply(self):
-        """Apply tracked writes via CAS — retries if another process wrote first."""
+        """Apply tracked writes. Lock held for entire transaction span."""
         for rid, tokens in self._pending:
-            is_tombstone = len(tokens) == 3 and tokens[0] == Token.D0 and tokens[-1] == Token.RECORD
-            for _ in range(100):  # Retry loop
-                current = self.grid.read(rid)
-                if is_tombstone:
-                    if current is None or current.is_tombstone:
-                        break  # Already deleted
-                    self.grid.delete(rid)
-                    break
-                else:
-                    if current is None or current.is_tombstone:
-                        # New record — just write
-                        self.grid.write(rid, tokens)
-                        break
-                    # CAS: only write if unchanged since we read
-                    if self.grid.write_if(rid, tokens, current.byte_offset, current.bit_length):
-                        break
-                    # CAS failed — retry
+            if len(tokens) == 3 and tokens[0] == Token.D0 and tokens[-1] == Token.RECORD:
+                self.grid.delete(rid)
+            elif rid >= 0:
+                self.grid.write(rid, tokens)
 
     def _check_open(self):
         if self._finalized:
@@ -262,7 +249,10 @@ class TransactionalGrid:
     def begin(self) -> Transaction:
         if self._active:
             raise RuntimeError("Transaction already in progress")
+        # Acquire lock for entire read→commit span
+        self.grid._acquire()
         def _done():
+            self.grid._release()
             self._txn_count += 1
             self._active = None
         self._active = Transaction(self.grid, self.wal, on_done=_done)
