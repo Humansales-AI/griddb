@@ -20,6 +20,26 @@ WEBHOOK_BASE = 70_000_000
 DELIVERY_BASE = 71_000_000
 MAX_RETRIES = 5
 BACKOFF = [1, 2, 4, 8, 16]
+import ipaddress, re
+
+# SSRF guard: blocked CIDRs + schemes
+BLOCKED_NETS = [
+    ipaddress.ip_network('127.0.0.0/8'), ipaddress.ip_network('10.0.0.0/8'),
+    ipaddress.ip_network('172.16.0.0/12'), ipaddress.ip_network('192.168.0.0/16'),
+    ipaddress.ip_network('169.254.0.0/16'), ipaddress.ip_network('::1/128'),
+    ipaddress.ip_network('fc00::/7'),
+]
+
+def _is_safe_url(url: str) -> bool:
+    """Reject private/loopback/link-local IPs and non-http(s) schemes."""
+    if not url.startswith(('http://', 'https://')):
+        return False
+    try:
+        host = url.split('://')[1].split('/')[0].split(':')[0]
+        addr = ipaddress.ip_address(host)
+        return not any(addr in net for net in BLOCKED_NETS)
+    except ValueError:
+        return True  # Hostname, not IP — allow
 
 
 class WebhookManager:
@@ -30,41 +50,50 @@ class WebhookManager:
         self._running = False
         self._thread: Optional[threading.Thread] = None
 
-    # ── CRUD ──────────────────────────────────────────────────────────
+    # ── CRUD (separate records per field — avoids word fragmentation) ─
+
+    def _hook_rid(self, hook_id: int, field: int) -> int:
+        return WEBHOOK_BASE + hook_id * 10 + field  # 0=url, 1=table, 2=events, 3=secret
 
     def create(self, url: str, table: str, events: List[str]) -> dict:
-        """Register a webhook. Returns { id, secret }."""
-        rid = self._next_id(WEBHOOK_BASE)
+        """Register a webhook. Each field stored as separate record."""
+        if not _is_safe_url(url):
+            raise ValueError(f"Unsafe URL: {url} — private/loopback IPs blocked")
+        rid = self._next_hook_id()
         secret = hashlib.sha256(os.urandom(32)).hexdigest()[:32]
-        tokens = [
-            *Encoder.encode_word(url),
-            *Encoder.encode_word(table),
-            *Encoder.encode_word(','.join(events)),
-            *Encoder.encode_word(secret),
-            Token.RECORD,
-        ]
-        self.grid.write(rid, tokens)
+        for fid, val in enumerate([url, table, ','.join(events), secret]):
+            self.grid.write(self._hook_rid(rid, fid), [
+                *Encoder.encode_word(val), Token.RECORD,
+            ])
         return {'id': rid, 'secret': secret, 'url': url, 'table': table, 'events': events}
 
     def list(self) -> List[dict]:
         """List all configured webhooks."""
         hooks = []
-        for rid in range(WEBHOOK_BASE, WEBHOOK_BASE + 1000):
-            rec = self.grid.read(rid)
-            if not rec or rec.is_tombstone: continue
-            words = [p.text for p in rec.parsed if isinstance(p, ParsedWord)]
-            if len(words) >= 4:
-                hooks.append({
-                    'id': rid, 'url': words[0], 'table': words[1],
-                    'events': words[2].split(','), 'secret': words[3],
-                })
+        for rid in range(self._next_hook_id()):
+            url_rec = self.grid.read(self._hook_rid(rid, 0))
+            if not url_rec or url_rec.is_tombstone: continue
+            url = ''.join(p.text for p in url_rec.parsed if isinstance(p, ParsedWord))
+            table_rec = self.grid.read(self._hook_rid(rid, 1))
+            table = ''.join(p.text for p in table_rec.parsed if isinstance(p, ParsedWord)) if table_rec else ''
+            events_rec = self.grid.read(self._hook_rid(rid, 2))
+            events = ''.join(p.text for p in events_rec.parsed if isinstance(p, ParsedWord)) if events_rec else ''
+            secret_rec = self.grid.read(self._hook_rid(rid, 3))
+            secret = ''.join(p.text for p in secret_rec.parsed if isinstance(p, ParsedWord)) if secret_rec else ''
+            hooks.append({'id': rid, 'url': url, 'table': table, 'events': events.split(','), 'secret': secret})
         return hooks
 
     def delete(self, hook_id: int) -> bool:
-        rec = self.grid.read(hook_id)
-        if not rec: return False
-        self.grid.delete(hook_id)
+        for fid in range(4):
+            rec = self.grid.read(self._hook_rid(hook_id, fid))
+            if not rec: return False
+            self.grid.delete(self._hook_rid(hook_id, fid))
         return True
+
+    def _next_hook_id(self) -> int:
+        rid = 0
+        while self.grid.read(self._hook_rid(rid, 0)): rid += 1
+        return rid
 
     # ── Delivery ───────────────────────────────────────────────────────
 
@@ -139,11 +168,6 @@ class WebhookManager:
             if hook:
                 self._deliver(hook, item['event'], {'_retry': True})
             self.grid.delete(item['id'])
-
-    def _next_id(self, base: int) -> int:
-        rid = base
-        while self.grid.read(rid): rid += 1
-        return rid
 
     def start(self):
         """Background retry loop for dead-letter queue."""
