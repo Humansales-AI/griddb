@@ -1,0 +1,14 @@
+/Users/georgeikanos/griddb/examples/model_is_db_burn/target/debug/deps/libserde-53663706f11b239f.rmeta: /Users/georgeikanos/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /Users/georgeikanos/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /Users/georgeikanos/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /Users/georgeikanos/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /Users/georgeikanos/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /Users/georgeikanos/griddb/examples/model_is_db_burn/target/debug/build/serde-c56cd93117f25f3b/out/private.rs
+
+/Users/georgeikanos/griddb/examples/model_is_db_burn/target/debug/deps/libserde-53663706f11b239f.rlib: /Users/georgeikanos/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /Users/georgeikanos/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /Users/georgeikanos/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /Users/georgeikanos/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /Users/georgeikanos/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /Users/georgeikanos/griddb/examples/model_is_db_burn/target/debug/build/serde-c56cd93117f25f3b/out/private.rs
+
+/Users/georgeikanos/griddb/examples/model_is_db_burn/target/debug/deps/serde-53663706f11b239f.d: /Users/georgeikanos/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /Users/georgeikanos/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /Users/georgeikanos/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /Users/georgeikanos/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /Users/georgeikanos/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /Users/georgeikanos/griddb/examples/model_is_db_burn/target/debug/build/serde-c56cd93117f25f3b/out/private.rs
+
+/Users/georgeikanos/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs:
+/Users/georgeikanos/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs:
+/Users/georgeikanos/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs:
+/Users/georgeikanos/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs:
+/Users/georgeikanos/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs:
+/Users/georgeikanos/griddb/examples/model_is_db_burn/target/debug/build/serde-c56cd93117f25f3b/out/private.rs:
+
+# env-dep:OUT_DIR=/Users/georgeikanos/griddb/examples/model_is_db_burn/target/debug/build/serde-c56cd93117f25f3b/out

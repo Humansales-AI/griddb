@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """
-5bit Model-IS-Database — NumPy + Full Backprop
-================================================
-Two-layer MLP. 5-bit token inputs. Full gradient descent.
-Softmax output over 32-token vocabulary. Autograd by hand.
+5bit Model-IS-Database — NumPy + Attention Backprop
+=====================================================
+Attention layer with full gradient computation.
+No framework — just numpy + known gradient formulas.
 
-Trains to 95%+ accuracy on 600 Q/A pairs in <5 seconds.
+Softmax attention backprop:
+  d_scores = attn * (d_attn - sum(attn * d_attn, axis=-1)) / sqrt(dk)
+  d_Q = d_scores @ K
+  d_K = d_scores^T @ Q
 
 Run: python3 examples/model_is_db_backprop.py
 """
@@ -16,100 +19,103 @@ import numpy as np
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'python'))
 from binary_grid_db import Token, Encoder
 
-VOCAB, D_MODEL, HIDDEN = 32, 64, 128
-MAX_SEQ = 64
+VOCAB, D_MODEL, MAX_SEQ = 32, 32, 32
 
 
-class FivebitMLP:
-    """Two-layer MLP with full backprop. 5-bit vocabulary."""
+class AttentionModel:
+    """Single attention layer + output. Full gradient backprop. 5-bit vocab."""
 
     def __init__(self):
         d = 0.02
         self.embed = np.random.randn(VOCAB, D_MODEL).astype(np.float32) * 0.1
-        self.W1 = np.random.randn(D_MODEL, HIDDEN).astype(np.float32) * d
-        self.b1 = np.zeros(HIDDEN, dtype=np.float32)
-        self.W2 = np.random.randn(HIDDEN, VOCAB).astype(np.float32) * d
-        self.b2 = np.zeros(VOCAB, dtype=np.float32)
+        self.W_q = np.random.randn(D_MODEL, D_MODEL).astype(np.float32) * d
+        self.W_k = np.random.randn(D_MODEL, D_MODEL).astype(np.float32) * d
+        self.W_v = np.random.randn(D_MODEL, D_MODEL).astype(np.float32) * d
+        self.W_o = np.random.randn(D_MODEL, D_MODEL).astype(np.float32) * d
+        self.W_out = np.random.randn(D_MODEL, VOCAB).astype(np.float32) * d
+        self.b_out = np.zeros(VOCAB, dtype=np.float32)
 
-    def forward(self, token_ids, training=False):
-        """token_ids: list of ints. Returns [VOCAB] probs + cache for backward."""
+    def forward(self, token_ids):
+        """Returns probs [VOCAB] and cache dict for backward."""
         n = min(len(token_ids), MAX_SEQ)
-        if n == 0: return np.zeros(VOCAB, dtype=np.float32), None
+        if n == 0:
+            return np.ones(VOCAB, dtype=np.float32) / VOCAB, {}
 
-        # Embed + positional encoding + sum (preserves order better than mean)
         idx = np.array(token_ids[:n], dtype=np.int32)
-        emb = self.embed[idx]  # [n, D_MODEL]
-        # Add sinusoidal positional encoding
-        pos = np.arange(n)[:, None].astype(np.float32)
-        dim = np.arange(D_MODEL)[None, :].astype(np.float32)
-        pe = np.zeros((n, D_MODEL), dtype=np.float32)
-        pe[:, 0::2] = np.sin(pos / (10000 ** (dim[:, 0::2] / D_MODEL)))
-        pe[:, 1::2] = np.cos(pos / (10000 ** (dim[:, 1::2] / D_MODEL)))
-        x = (emb + pe).sum(axis=0) / np.sqrt(n)  # scaled sum — preserves order
+        x = self.embed[idx]  # [n, D]
 
-        # Layer 1: D_MODEL → HIDDEN, ReLU
-        z1 = x @ self.W1 + self.b1  # [HIDDEN]
-        a1 = np.maximum(0, z1)      # ReLU
+        # Attention
+        Q = x @ self.W_q; K = x @ self.W_k; V = x @ self.W_v  # [n, D]
+        dk = math.sqrt(D_MODEL)
+        scores = Q @ K.T / dk                                   # [n, n]
+        attn = self._softmax(scores)                            # [n, n]
+        out = attn @ V                                          # [n, D]
+        h = x + out @ self.W_o * 0.1                            # residual [n, D]
 
-        # Layer 2: HIDDEN → VOCAB
-        logits = a1 @ self.W2 + self.b2  # [VOCAB]
+        # Pool last position → output
+        logits = h[-1] @ self.W_out + self.b_out                # [VOCAB]
+        probs = self._softmax(logits[None, :])[0]
 
-        # Softmax
-        e = np.exp(logits - logits.max())
-        probs = e / e.sum()
+        cache = {'x': x, 'Q': Q, 'K': K, 'V': V, 'scores': scores, 'attn': attn, 'out': out, 'h': h, 'idx': idx}
+        return probs, cache
 
-        if training:
-            return probs, (x, z1, a1, logits)
-        return probs, None
+    def _softmax(self, x):
+        e = np.exp(x - x.max(axis=-1, keepdims=True))
+        return e / e.sum(axis=-1, keepdims=True)
 
     def train_step(self, q_ids, a_ids, lr=0.01):
-        """One step of SGD with full backprop."""
         loss = 0.0
         ctx = list(q_ids)
         for target in a_ids:
             if not (0 <= target < VOCAB): continue
 
-            # Forward
-            probs, cache = self.forward(ctx, training=True)
-            if cache is None: continue
-            x, z1, a1, logits = cache
-
+            probs, c = self.forward(ctx)
+            if not c: continue
             p = max(probs[target], 1e-10)
             loss -= math.log(p)
 
-            # Backward: dL/d_logits = probs - one_hot(target)
+            # ── Output gradients ──────────────────────────────────
             d_logits = probs.copy()
             d_logits[target] -= 1.0
+            d_h_last = self.W_out @ d_logits  # [D]
 
-            # Layer 2 gradients
-            d_W2 = np.outer(a1, d_logits)      # [HIDDEN, VOCAB]
-            d_b2 = d_logits                      # [VOCAB]
-            d_a1 = self.W2 @ d_logits            # [HIDDEN]
+            self.W_out -= lr * np.outer(c['h'][-1], d_logits)
+            self.b_out -= lr * d_logits
 
-            # ReLU backward
-            d_z1 = d_a1 * (z1 > 0).astype(np.float32)  # [HIDDEN]
+            # ── Attention gradients ───────────────────────────────
+            # dL/d_out = d_h_last * 0.1 (residual scale)
+            d_out = np.zeros_like(c['out'])
+            d_out[-1] = d_h_last * 0.1
 
-            # Layer 1 gradients
-            d_W1 = np.outer(x, d_z1)             # [D_MODEL, HIDDEN]
-            d_b1 = d_z1                           # [HIDDEN]
-            d_x = self.W1 @ d_z1                  # [D_MODEL]
+            # dV = attn^T @ d_out, d_attn = d_out @ V^T
+            d_V = c['attn'].T @ d_out
+            d_attn = d_out @ c['V'].T
 
-            # Embedding gradient with positional encoding
-            n = min(len(ctx), MAX_SEQ)
-            idx = np.array(ctx[:n], dtype=np.int32)
+            # Softmax backward
+            d_scores = c['attn'] * (d_attn - (c['attn'] * d_attn).sum(axis=-1, keepdims=True)) / math.sqrt(D_MODEL)
+
+            # Q, K, V projection gradients
+            d_Q = d_scores @ c['K']
+            d_K = d_scores.T @ c['Q']
+
+            # Weight gradients
+            self.W_q -= lr * 0.1 * c['x'].T @ d_Q / c['x'].shape[0]
+            self.W_k -= lr * 0.1 * c['x'].T @ d_K / c['x'].shape[0]
+            self.W_v -= lr * 0.1 * c['x'].T @ d_V / c['x'].shape[0]
+            self.W_o -= lr * 0.01 * c['out'].T @ d_out / c['x'].shape[0]
+
+            # Embedding gradient
+            d_x = d_Q @ self.W_q.T + d_K @ self.W_k.T + d_V @ self.W_v.T
+            n = c['idx'].shape[0]
             for i in range(n):
-                self.embed[idx[i]] -= lr * 0.1 * d_x / np.sqrt(n)
-
-            # Apply gradients
-            self.W2 -= lr * d_W2; self.b2 -= lr * d_b2
-            self.W1 -= lr * d_W1; self.b1 -= lr * d_b1
+                self.embed[c['idx'][i]] -= lr * 0.01 * d_x[i] / n
 
             ctx.append(target)
         return loss
 
     def predict(self, q_ids):
         probs, _ = self.forward(q_ids)
-        return int(np.argmax(probs)) if probs is not None else 0
+        return int(np.argmax(probs))
 
 
 def generate_qa(n_users, n_orders):
@@ -139,11 +145,11 @@ def benchmark():
     print("  5bit Model-IS-Database — NumPy + Full Backprop")
     print("═" * 60)
 
-    for n_users, n_orders, epochs in [(50, 200, 100), (100, 500, 80), (200, 1000, 60)]:
+    for n_users, n_orders, epochs in [(50, 200, 150), (100, 500, 120), (200, 1000, 100)]:
         print(f"\n── {n_users} users × {n_orders} orders ──")
         qa, db = generate_qa(n_users, n_orders)
-        model = FivebitMLP()
-        params = VOCAB * D_MODEL + D_MODEL * HIDDEN + HIDDEN * VOCAB
+        model = AttentionModel()
+        params = VOCAB * D_MODEL + D_MODEL * D_MODEL * 5 + D_MODEL * VOCAB
         print(f"  Model: {params:,} params, {len(qa)} Q/A pairs")
 
         split = len(qa) // 2
