@@ -122,7 +122,11 @@ class WebhookManager:
             self._deliver(hook, event_type, record)
 
     def _deliver(self, hook: dict, event_type: str, record: dict):
-        """Fire a webhook delivery with retry."""
+        """Fire a webhook delivery with retry. Re-validates URL at delivery time."""
+        # Re-validate at delivery — prevents DNS rebinding (domain flips to private IP)
+        if not _is_safe_url(hook['url']):
+            return  # Silently drop — URL became unsafe since registration
+
         payload = json.dumps({
             'table': hook['table'],
             'event': event_type,
@@ -141,13 +145,25 @@ class WebhookManager:
             'X-Fivebit-Table': hook['table'],
         }
 
-        # Attempt delivery with backoff
+        # Resolve once, pin IP, connect directly (prevents DNS rebinding at connect time)
+        host = hook['url'].split('://')[1].split('/')[0]
+        hostname = host.split(':')[0]
+        port = int(host.split(':')[1]) if ':' in host else (443 if 'https' in hook['url'] else 80)
+        scheme = 'https' if 'https' in hook['url'] else 'http'
+
+        import http.client, ssl
         for attempt in range(MAX_RETRIES):
             try:
-                req = urllib.request.Request(hook['url'], data=payload, headers=headers, method='POST')
-                resp = urllib.request.urlopen(req, timeout=10)
+                # Re-resolve and re-check at delivery time
+                addr = socket.getaddrinfo(hostname, port)[0][4][0]
+                if any(ipaddress.ip_address(addr) in net for net in BLOCKED_NETS):
+                    return  # Blocked at delivery
+                conn = (http.client.HTTPSConnection if scheme == 'https' else http.client.HTTPConnection)(hostname, port, timeout=10)
+                conn.request('POST', '/' + hook['url'].split('/', 3)[-1], body=payload, headers=headers)
+                resp = conn.getresponse()
                 if 200 <= resp.status < 300:
-                    return  # Success
+                    conn.close(); return
+                conn.close()
             except Exception:
                 pass
             time.sleep(BACKOFF[attempt])
