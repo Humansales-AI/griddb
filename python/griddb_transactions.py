@@ -195,12 +195,19 @@ class Transaction:
         if self._on_done: self._on_done()
 
     def _apply(self):
-        """Apply tracked writes. Lock held for entire transaction span."""
-        for rid, tokens in self._pending:
-            if len(tokens) == 3 and tokens[0] == Token.D0 and tokens[-1] == Token.RECORD:
-                self.grid.delete(rid)
-            elif rid >= 0:
-                self.grid.write(rid, tokens)
+        """Apply tracked writes under lock. Crash-safe via DIRTY marker."""
+        DIRTY_RID = 99_999_999  # Well-known record ID for crash recovery
+        # Write DIRTY marker: which txn is mid-apply
+        self.grid.write(DIRTY_RID, Encoder.encode_integer(self.txn_id) + [Token.RECORD])
+        try:
+            for rid, tokens in self._pending:
+                if len(tokens) == 3 and tokens[0] == Token.D0 and tokens[-1] == Token.RECORD:
+                    self.grid.delete(rid)
+                elif rid >= 0:
+                    self.grid.write(rid, tokens)
+        finally:
+            # Clear DIRTY marker — all writes applied
+            self.grid.delete(DIRTY_RID)
 
     def _check_open(self):
         if self._finalized:
@@ -224,27 +231,46 @@ class TransactionalGrid:
         self._recover()
 
     def _recover(self):
-        """Replay WAL: apply committed writes, discard pending/rolled-back."""
-        entries = self.wal.read_all()
-        committed_ids = set()
-        pending_ids = set()
+        """Replay WAL under lock. Isolated — no concurrent writers during recovery."""
+        self.grid._acquire()
+        try:
+            entries = self.wal.read_all()
+            committed_ids = set()
+            pending_ids = set()
 
-        for e in entries:
-            if e['flags'] == TxnWAL.FLAG_COMMITTED:
-                # COMMIT marker entry
-                committed_ids.add(e['txn_id'])
-            elif e['flags'] == TxnWAL.FLAG_PENDING:
-                pending_ids.add(e['txn_id'])
+            for e in entries:
+                if e['flags'] == TxnWAL.FLAG_COMMITTED:
+                    committed_ids.add(e['txn_id'])
+                elif e['flags'] == TxnWAL.FLAG_PENDING:
+                    pending_ids.add(e['txn_id'])
 
-        # Apply writes from committed transactions
-        for e in entries:
-            if e['flags'] == TxnWAL.FLAG_PENDING and e['txn_id'] in committed_ids:
-                rid = e['record_id']
-                tokens = e['tokens']
-                if len(tokens) == 3 and tokens[0] == Token.D0:
-                    self.grid.delete(rid)
-                elif rid >= 0:
-                    self.grid.write(rid, tokens)
+            # Apply writes from committed transactions
+            for e in entries:
+                if e['flags'] == TxnWAL.FLAG_PENDING and e['txn_id'] in committed_ids:
+                    rid = e['record_id']; tokens = e['tokens']
+                    if len(tokens) == 3 and tokens[0] == Token.D0:
+                        self.grid.delete(rid)
+                    elif rid >= 0:
+                        self.grid.write(rid, tokens)
+
+            # Crash recovery: check for torn transaction
+            DIRTY_RID = 99_999_999
+            dirty = self.grid.read(DIRTY_RID)
+            if dirty and not dirty.is_tombstone:
+                nums = [p.value for p in dirty.parsed if isinstance(p, ParsedNumber)]
+                torn_id = nums[-1] if nums else None
+                if torn_id is not None:
+                    # Re-apply the torn transaction's writes
+                    for e in entries:
+                        if e['txn_id'] == torn_id and e['flags'] == TxnWAL.FLAG_PENDING:
+                            rid = e['record_id']; tokens = e['tokens']
+                            if len(tokens) == 3 and tokens[0] == Token.D0:
+                                self.grid.delete(rid)
+                            elif rid >= 0:
+                                self.grid.write(rid, tokens)
+                self.grid.delete(DIRTY_RID)
+        finally:
+            self.grid._release()
 
     def begin(self) -> Transaction:
         if self._active:
