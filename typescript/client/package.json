@@ -1,9 +1,15 @@
 {
-  "name": "@fivebit/client",
+  "name": "fivebit-client",
   "version": "0.1.0",
   "description": "5bit client SDK — deterministic, content-addressed database",
-  "main": "src/index.ts",
-  "types": "src/index.ts",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": ["dist", "src"],
+  "repository": { "type": "git", "url": "https://github.com/Humansales-AI/5bit" },
   "license": "MIT",
-  "keywords": ["5bit", "database", "deterministic", "content-addressed"]
+  "keywords": ["5bit", "database", "deterministic", "content-addressed", "realtime"],
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "tsc"
+  }
 }

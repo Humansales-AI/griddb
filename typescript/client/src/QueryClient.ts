@@ -24,7 +24,7 @@ export class QueryClient {
         const etag = self.etagCache.get(id);
         if (etag) h['If-None-Match'] = `"${etag}"`;
         const r = await fetch(`${self.baseUrl}/records/${id}`, { headers: h });
-        if (r.status === 304) return { data: null, error: null, etag };
+        if (r.status === 304) return { data: null, error: null, etag: etag || '' };
         const data = await r.json();
         const newEtag = r.headers.get('ETag')?.replace(/"/g, '') || '';
         if (newEtag) self.etagCache.set(id, newEtag);
