@@ -119,8 +119,9 @@ class AuthHandler:
 
             if provider == 'google':
                 id_token = data.get('idToken', '')
-                if not id_token: return 400, {'error': 'idToken required'}
                 google_client_id = os.environ.get('GOOGLE_CLIENT_ID', '')
+                if not id_token: return 400, {'error': 'idToken required'}
+                if not google_client_id: return 500, {'error': 'GOOGLE_CLIENT_ID not configured'}
                 profile = verify_google_token(id_token, google_client_id)
                 if not profile: return 401, {'error': 'Invalid Google token'}
             elif provider == 'github':
