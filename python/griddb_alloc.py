@@ -106,6 +106,7 @@ class AllocGrid:
         self.data_path = os.path.join(data_dir, "data.grid")
 
         self._lock_fd = None
+        self._lock_depth = 0
         self._data_end = DATA_HEADER_SIZE
         self._alloc_fd: Optional[int] = None
         self._data_fd: Optional[int] = None
@@ -154,10 +155,17 @@ class AllocGrid:
     # ── Locking ──────────────────────────────────────────────────────────
 
     def _acquire(self):
+        if self._lock_depth > 0:
+            self._lock_depth += 1
+            return  # Already acquired — reentrant
         self._lock_fd = open(self.alloc_path, 'r+b')
         fcntl.flock(self._lock_fd, fcntl.LOCK_EX)
+        self._lock_depth = 1
 
     def _release(self):
+        self._lock_depth -= 1
+        if self._lock_depth > 0:
+            return  # Inner call — don't release yet
         if self._lock_fd:
             fcntl.flock(self._lock_fd, fcntl.LOCK_UN)
             self._lock_fd.close()
