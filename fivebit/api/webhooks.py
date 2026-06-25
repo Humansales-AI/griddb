@@ -48,14 +48,8 @@ def _is_safe_url(url: str) -> bool:
         return False  # Can't resolve = don't trust
 
 def _reconstruct_all(rec: AllocRecord) -> str:
-    """Reconstruct a string from ALL parsed tokens — words + numbers + specials."""
-    result = ''
-    for p in rec.parsed:
-        if isinstance(p, ParsedWord):
-            result += p.text
-        elif isinstance(p, ParsedNumber):
-            result += str(p.value)
-    return result
+    """Reconstruct a string from parsed tokens. Delegates to shared AllocGrid method."""
+    return AllocGrid.reconstruct_all(rec.parsed)
 
 
 class WebhookManager:

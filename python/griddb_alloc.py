@@ -334,12 +334,12 @@ class AllocGrid:
 
     @staticmethod
     def reconstruct_all(parsed: list) -> str:
-        """Reconstruct a string from ALL parsed tokens — words + numbers. Immune to fragmentation."""
+        """Reconstruct a string from parsed word+number tokens. Skips control tokens (RECORD/END/etc)."""
         result = ''
         for p in parsed:
             if hasattr(p, 'text'):
                 result += p.text
-            elif hasattr(p, 'value'):
+            elif hasattr(p, 'value') and getattr(p, 'type', '') == 'number':
                 result += str(p.value)
         return result
 
