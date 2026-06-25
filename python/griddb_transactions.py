@@ -147,13 +147,11 @@ class Transaction:
     No memory limit — writes are on disk from the moment put() is called.
     """
 
-    _next_id = 1
-
     def __init__(self, grid: AllocGrid, wal: TxnWAL, on_done=None):
         self.grid = grid
         self.wal = wal
-        self.txn_id = Transaction._next_id
-        Transaction._next_id += 1
+        # Globally-unique txn ID: nanosecond timestamp XOR'd with PID
+        self.txn_id = (int(time.time() * 1e9) ^ os.getpid()) & 0x7FFFFFFF
         self._finalized = False
         self._op_count = 0
         self._on_done = on_done
@@ -197,12 +195,25 @@ class Transaction:
         if self._on_done: self._on_done()
 
     def _apply(self):
-        """Apply tracked writes to the grid — O(1) per write, no WAL rescan."""
+        """Apply tracked writes via CAS — retries if another process wrote first."""
         for rid, tokens in self._pending:
-            if len(tokens) == 3 and tokens[0] == Token.D0 and tokens[-1] == Token.RECORD:
-                self.grid.delete(rid)
-            elif rid >= 0:
-                self.grid.write(rid, tokens)
+            is_tombstone = len(tokens) == 3 and tokens[0] == Token.D0 and tokens[-1] == Token.RECORD
+            for _ in range(100):  # Retry loop
+                current = self.grid.read(rid)
+                if is_tombstone:
+                    if current is None or current.is_tombstone:
+                        break  # Already deleted
+                    self.grid.delete(rid)
+                    break
+                else:
+                    if current is None or current.is_tombstone:
+                        # New record — just write
+                        self.grid.write(rid, tokens)
+                        break
+                    # CAS: only write if unchanged since we read
+                    if self.grid.write_if(rid, tokens, current.byte_offset, current.bit_length):
+                        break
+                    # CAS failed — retry
 
     def _check_open(self):
         if self._finalized:
