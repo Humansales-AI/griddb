@@ -253,30 +253,41 @@ class TransactionalGrid:
                     elif rid >= 0:
                         self.grid.write(rid, tokens)
 
-            # Crash recovery: check for torn transaction
-            DIRTY_RID = 99_999_999
-            dirty = self.grid.read(DIRTY_RID)
-            if dirty and not dirty.is_tombstone:
-                nums = [p.value for p in dirty.parsed if isinstance(p, ParsedNumber)]
-                torn_id = nums[-1] if nums else None
-                if torn_id is not None:
-                    # Re-apply the torn transaction's writes
-                    for e in entries:
-                        if e['txn_id'] == torn_id and e['flags'] == TxnWAL.FLAG_PENDING:
-                            rid = e['record_id']; tokens = e['tokens']
-                            if len(tokens) == 3 and tokens[0] == Token.D0:
-                                self.grid.delete(rid)
-                            elif rid >= 0:
-                                self.grid.write(rid, tokens)
-                self.grid.delete(DIRTY_RID)
+            # Crash recovery: finish any torn transaction (also checked in begin())
+            self._finish_dirty(entries)
         finally:
             self.grid._release()
+
+    def _finish_dirty(self, entries=None):
+        """Check for and complete any torn (half-applied) committed transaction.
+        Called from both _recover() and begin() — ensures no process ever reads
+        a committed-but-unapplied value."""
+        DIRTY_RID = 99_999_999
+        dirty = self.grid.read(DIRTY_RID)
+        if not dirty or dirty.is_tombstone:
+            return
+        nums = [p.value for p in dirty.parsed if isinstance(p, ParsedNumber)]
+        torn_id = nums[-1] if nums else None
+        if torn_id is None:
+            return
+        if entries is None:
+            entries = self.wal.read_all()
+        for e in entries:
+            if e['txn_id'] == torn_id and e['flags'] == TxnWAL.FLAG_PENDING:
+                rid = e['record_id']; tokens = e['tokens']
+                if len(tokens) == 3 and tokens[0] == Token.D0:
+                    self.grid.delete(rid)
+                elif rid >= 0:
+                    self.grid.write(rid, tokens)
+        self.grid.delete(DIRTY_RID)
 
     def begin(self) -> Transaction:
         if self._active:
             raise RuntimeError("Transaction already in progress")
         # Acquire lock for entire read→commit span
         self.grid._acquire()
+        # Before any read: finish any torn predecessor
+        self._finish_dirty()
         def _done():
             self.grid._release()
             self._txn_count += 1
