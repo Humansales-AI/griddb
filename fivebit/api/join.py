@@ -29,15 +29,10 @@ def _record_to_dict(rec: AllocRecord, fields: List[str]) -> dict:
     return {fields[i]: vals[i] for i in range(min(len(fields), len(vals)))}
 
 
-TABLE_STRIDE = 10_000_000  # Each table gets its own record ID namespace
-
-def _table_base(name: str) -> int:
-    """Deterministic record ID range per table."""
-    h = hashlib.sha256(name.encode()).digest()
-    return (int.from_bytes(h[:4], 'big') % 1000) * TABLE_STRIDE
+from fivebit.api.registry import TableRegistry
 
 class MergeJoiner:
-    """B-tree merge join. Tables partitioned by record ID range."""
+    """B-tree merge join. Tables partitioned by registry namespace."""
 
     def __init__(self, grid: AllocGrid, left_spec: dict, right_spec: dict):
         self.grid = grid
@@ -45,8 +40,9 @@ class MergeJoiner:
         self.left_fields = left_spec.get('fields', [])
         self.right_name = right_spec['name']
         self.right_fields = right_spec.get('fields', [])
-        self.left_base = _table_base(self.left_name)
-        self.right_base = _table_base(self.right_name)
+        self.reg = TableRegistry(grid)
+        self.left_base = self.reg.base(self.left_name)
+        self.right_base = self.reg.base(self.right_name)
 
     def join(self, on_field: str, data_dir: str) -> List[dict]:
         """Merge join on a shared field. Tables partitioned by rid range."""
