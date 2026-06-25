@@ -1,41 +1,80 @@
 type ChangeHandler = (record: any) => void;
+type MessageHandler = (payload: any) => void;
 
 export class RealtimeClient {
   private baseUrl: string;
-  private sources: Map<string, EventSource> = new Map();
-  private handlers: Map<string, Set<ChangeHandler>> = new Map();
+  private ws: WebSocket | null = null;
+  private tableHandlers: Map<string, Set<ChangeHandler>> = new Map();
+  private channelHandlers: Map<string, Set<MessageHandler>> = new Map();
+  private presenceCache: any[] = [];
   private reconnectMs = 3000;
+  private wsUrl: string;
 
-  constructor(baseUrl: string) { this.baseUrl = baseUrl; }
-
-  subscribe(table: string, fn: ChangeHandler): () => void {
-    if (!this.handlers.has(table)) {
-      this.handlers.set(table, new Set());
-      this._connect(table);
-    }
-    this.handlers.get(table)!.add(fn);
-    return () => this.handlers.get(table)?.delete(fn);
+  constructor(baseUrl: string) {
+    this.baseUrl = baseUrl;
+    this.wsUrl = baseUrl.replace('http', 'ws') + '/ws';
+    this._connect();
   }
 
-  private _connect(table: string): void {
-    const url = `${this.baseUrl}/stream/${table}`;
-    const es = new EventSource(url);
-    es.onmessage = (e) => {
+  private _connect(): void {
+    if (typeof WebSocket === 'undefined') return;
+    this.ws = new WebSocket(this.wsUrl);
+    this.ws.onopen = () => {
+      // Re-subscribe to tables
+      for (const table of this.tableHandlers.keys()) {
+        this.ws!.send(JSON.stringify({ type: 'subscribe', table }));
+      }
+    };
+    this.ws.onmessage = (e) => {
       try {
-        const record = JSON.parse(e.data);
-        this.handlers.get(table)?.forEach(fn => fn(record));
+        const msg = JSON.parse(e.data);
+        if (msg.type === 'change') {
+          this.tableHandlers.get(msg.table)?.forEach(fn => fn(msg.event));
+        } else if (msg.type === 'broadcast') {
+          this.channelHandlers.get(msg.channel)?.forEach(fn => fn(msg.payload));
+        } else if (msg.type === 'presence') {
+          this.presenceCache = msg.users || [];
+          this.channelHandlers.get(`__presence:${msg.channel || ''}`)?.forEach(fn => fn(msg));
+        }
       } catch {}
     };
-    es.onerror = () => {
-      es.close();
-      setTimeout(() => this._connect(table), this.reconnectMs);
-    };
-    this.sources.set(table, es);
+    this.ws.onclose = () => setTimeout(() => this._connect(), this.reconnectMs);
   }
 
-  close(): void {
-    for (const es of this.sources.values()) es.close();
-    this.sources.clear();
-    this.handlers.clear();
+  // Table changes (backward compat + new)
+  subscribe(table: string, fn: ChangeHandler): () => void {
+    if (!this.tableHandlers.has(table)) this.tableHandlers.set(table, new Set());
+    this.tableHandlers.get(table)!.add(fn);
+    if (this.ws?.readyState === 1) {
+      this.ws.send(JSON.stringify({ type: 'subscribe', table }));
+    }
+    return () => this.tableHandlers.get(table)?.delete(fn);
   }
+
+  // Channels (new)
+  channel(name: string) {
+    const self = this;
+    return {
+      on(fn: MessageHandler) {
+        if (!self.channelHandlers.has(name)) self.channelHandlers.set(name, new Set());
+        self.channelHandlers.get(name)!.add(fn);
+        if (self.ws?.readyState === 1) {
+          self.ws.send(JSON.stringify({ type: 'channel', channel: name }));
+        }
+      },
+      broadcast(payload: any) {
+        if (self.ws?.readyState === 1) {
+          self.ws.send(JSON.stringify({ type: 'broadcast', channel: name, payload }));
+        }
+      },
+      presence(userId: number, userName: string) {
+        if (self.ws?.readyState === 1) {
+          self.ws.send(JSON.stringify({ type: 'presence', userId, name: userName, channel: name }));
+        }
+      },
+      get users(): any[] { return self.presenceCache; },
+    };
+  }
+
+  close(): void { this.ws?.close(); }
 }
