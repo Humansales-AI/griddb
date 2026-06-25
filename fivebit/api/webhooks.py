@@ -178,7 +178,7 @@ class WebhookManager:
             time.sleep(BACKOFF[attempt])
 
         # Dead-letter: store failed delivery as separate fields (prevents fragmentation)
-        dlq_rid = DELIVERY_BASE
+        dlq_rid = 0
         while self.grid.read(DELIVERY_BASE + dlq_rid * 10): dlq_rid += 1
         base = DELIVERY_BASE + dlq_rid * 10
         for fid, val in enumerate([hook['url'], str(hook['id']), event_type, payload.decode()[:500]]):
