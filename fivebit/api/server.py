@@ -288,6 +288,19 @@ class APIHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         if not self._check_rate(): return
+        # Try auth routes first
+        try:
+            from fivebit.api.auth_server import AuthHandler
+            ah = AuthHandler()
+            ah.grid = self.grid
+            content_len = int(self.headers.get('Content-Length', 0))
+            body = self.rfile.read(content_len)
+            result = ah.handle_auth('POST', self.path, dict(self.headers), body)
+            if result is not None:
+                code, data = result
+                self._send(code, data)
+                return
+        except: pass
         if self.path == '/records':
             content_len = int(self.headers.get('Content-Length', 0))
             body = json.loads(self.rfile.read(content_len))
