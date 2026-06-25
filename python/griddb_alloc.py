@@ -332,6 +332,17 @@ class AllocGrid:
             self._cache_misses += 1
         return rec
 
+    @staticmethod
+    def reconstruct_all(parsed: list) -> str:
+        """Reconstruct a string from ALL parsed tokens — words + numbers. Immune to fragmentation."""
+        result = ''
+        for p in parsed:
+            if hasattr(p, 'text'):
+                result += p.text
+            elif hasattr(p, 'value'):
+                result += str(p.value)
+        return result
+
     def delete(self, record_id: int) -> bool:
         """Mark record as tombstone in alloc table. O(1)."""
         entry = self._read_alloc_entry(record_id)
