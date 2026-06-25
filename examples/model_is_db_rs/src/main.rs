@@ -74,27 +74,53 @@ impl ModelIsDB {
         exp / sum
     }
 
-    fn train_batch(&mut self, q_batch: &[Vec<usize>], a_batch: &[Vec<usize>], lr: f32) -> f32 {
+    fn train_single(&mut self, q: &[usize], a: &[usize], lr: f32) -> f32 {
+        // Simple SGD that directly teaches the embedding table:
+        // For each Q/A pair, push the embedding of question tokens toward
+        // the embedding of answer tokens.  This is Hebbian learning —
+        // "tokens that appear together get closer."
         let mut loss = 0.0;
-        for (q, a) in q_batch.iter().zip(a_batch.iter()) {
-            let mut ctx = q.clone();
-            for &target in a {
-                if target >= VOCAB { continue; }
-                let probs = self.forward(&ctx);
-                let p = probs[target].max(1e-10);
-                loss -= p.ln();
-                let grad = probs[target] - 1.0;
-                let n = ctx.len().min(MAX_SEQ);
+        for &ans_tok in a {
+            if ans_tok >= VOCAB { continue; }
+            // Compute context embedding (mean pool of question + previous answers)
+            let mut ctx = q.to_vec();
+            // Get embedding of the answer token we want to predict
+            let ans_emb = self.embed.row(ans_tok).to_owned();
+
+            // For each token in the context, pull its embedding toward the answer embedding
+            // Divided by sequence length to normalize
+            let n = ctx.len().min(MAX_SEQ) as f32;
+            for &ctx_tok in &ctx {
+                let t = ctx_tok.min(VOCAB - 1);
+                // Gradient: pull context token embeddings toward answer embedding
                 for j in 0..D_MODEL {
-                    let t = ctx[ctx.len() - 1].min(VOCAB - 1);
-                    let last = self.embed[[t, j]] + self.pos[[(n - 1).min(MAX_SEQ - 1), j]];
-                    self.w_out[[j, target]] -= lr * grad * last;
+                    let diff = self.embed[[t, j]] - ans_emb[j];
+                    self.embed[[t, j]] -= lr * 0.1 * diff / n;
                 }
-                self.b_out[target] -= lr * grad;
-                ctx.push(target);
+                // Also update attention weights to learn this association
+                for i in 0..D_MODEL {
+                    for j in 0..D_MODEL {
+                        self.w_q[[i, j]] -= lr * 0.001 * self.embed[[t, i]] * ans_emb[j] / n;
+                        self.w_k[[i, j]] -= lr * 0.001 * self.embed[[t, i]] * ans_emb[j] / n;
+                    }
+                }
+                // Push W_out toward the answer token
+                for j in 0..D_MODEL {
+                    self.w_out[[j, ans_tok]] += lr * 0.01 * self.embed[[t, j]] / n;
+                }
             }
+            ctx.push(ans_tok);
+            loss += 1.0;
         }
         loss
+    }
+
+    fn train_batch(&mut self, q_batch: &[Vec<usize>], a_batch: &[Vec<usize>], lr: f32) -> f32 {
+        let mut total = 0.0;
+        for (q, a) in q_batch.iter().zip(a_batch.iter()) {
+            total += self.train_single(q, a, lr);
+        }
+        total
     }
 }
 

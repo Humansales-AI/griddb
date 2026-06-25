@@ -1,0 +1,8 @@
+[package]
+name = "fivebit-burn"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+burn = { version = "0.16", features = ["autodiff", "ndarray"] }
+rand = "0.8"
