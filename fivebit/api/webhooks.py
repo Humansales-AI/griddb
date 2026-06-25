@@ -8,13 +8,13 @@ POST /api/webhooks  { url, table, events }  → { id, secret }
 GET  /api/webhooks                          → list configured webhooks
 DELETE /api/webhooks/{id}                    → remove
 """
-import os, sys, json, time, hashlib, hmac, threading, urllib.request
+import os, sys, json, time, hashlib, hmac, threading, urllib.request, socket
 from collections import defaultdict
 from typing import List, Dict, Optional
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'python'))
 from binary_grid_db import Token, Encoder, Parser, ParsedNumber, ParsedWord
-from griddb_alloc import AllocGrid
+from griddb_alloc import AllocGrid, AllocRecord
 
 WEBHOOK_BASE = 70_000_000
 DELIVERY_BASE = 71_000_000
@@ -22,7 +22,7 @@ MAX_RETRIES = 5
 BACKOFF = [1, 2, 4, 8, 16]
 import ipaddress, re
 
-# SSRF guard: blocked CIDRs + schemes
+# SSRF guard: blocked CIDRs + resolve hostnames
 BLOCKED_NETS = [
     ipaddress.ip_network('127.0.0.0/8'), ipaddress.ip_network('10.0.0.0/8'),
     ipaddress.ip_network('172.16.0.0/12'), ipaddress.ip_network('192.168.0.0/16'),
@@ -31,15 +31,31 @@ BLOCKED_NETS = [
 ]
 
 def _is_safe_url(url: str) -> bool:
-    """Reject private/loopback/link-local IPs and non-http(s) schemes."""
+    """Reject private/loopback/link-local targets. Resolves hostnames."""
     if not url.startswith(('http://', 'https://')):
         return False
     try:
         host = url.split('://')[1].split('/')[0].split(':')[0]
-        addr = ipaddress.ip_address(host)
-        return not any(addr in net for net in BLOCKED_NETS)
-    except ValueError:
-        return True  # Hostname, not IP — allow
+        port = int(url.split(':')[-1].split('/')[0]) if ']:' not in url and url.count(':') >= 3 else None
+        host = host.strip('[]')  # Strip IPv6 brackets
+        # Resolve and check every address
+        for info in socket.getaddrinfo(host, port or 80):
+            addr = ipaddress.ip_address(info[4][0])
+            if any(addr in net for net in BLOCKED_NETS):
+                return False
+        return True
+    except Exception:
+        return False  # Can't resolve = don't trust
+
+def _reconstruct_all(rec: AllocRecord) -> str:
+    """Reconstruct a string from ALL parsed tokens — words + numbers + specials."""
+    result = ''
+    for p in rec.parsed:
+        if isinstance(p, ParsedWord):
+            result += p.text
+        elif isinstance(p, ParsedNumber):
+            result += str(p.value)
+    return result
 
 
 class WebhookManager:
@@ -73,13 +89,13 @@ class WebhookManager:
         for rid in range(self._next_hook_id()):
             url_rec = self.grid.read(self._hook_rid(rid, 0))
             if not url_rec or url_rec.is_tombstone: continue
-            url = ''.join(p.text for p in url_rec.parsed if isinstance(p, ParsedWord))
+            url = _reconstruct_all(url_rec)
             table_rec = self.grid.read(self._hook_rid(rid, 1))
-            table = ''.join(p.text for p in table_rec.parsed if isinstance(p, ParsedWord)) if table_rec else ''
+            table = _reconstruct_all(table_rec) if table_rec else ''
             events_rec = self.grid.read(self._hook_rid(rid, 2))
-            events = ''.join(p.text for p in events_rec.parsed if isinstance(p, ParsedWord)) if events_rec else ''
+            events = _reconstruct_all(events_rec) if events_rec else ''
             secret_rec = self.grid.read(self._hook_rid(rid, 3))
-            secret = ''.join(p.text for p in secret_rec.parsed if isinstance(p, ParsedWord)) if secret_rec else ''
+            secret = _reconstruct_all(secret_rec) if secret_rec else ''
             hooks.append({'id': rid, 'url': url, 'table': table, 'events': events.split(','), 'secret': secret})
         return hooks
 
