@@ -159,7 +159,7 @@ class StorageServer:
         if not meta: return False
         stored = self._get_owner(rid)
         if stored < 0: return False  # No owner = reject
-        if self._owner_id is not None and stored != self._owner_id: return False
+        if self._owner_id is None or stored != self._owner_id: return False
         self.grid.delete(rid)
         ci = 1
         while True:
@@ -178,7 +178,7 @@ class StorageServer:
             if not rec or rec.is_tombstone: continue
             owner = self._get_owner(rid)
             if owner < 0: continue  # No owner set = skip
-            if self._owner_id is not None and owner != self._owner_id: continue
+            if self._owner_id is None or owner != self._owner_id: continue
             # Check bucket name in text
             if bucket in text:
                 path_str = text.split(bucket)[-1].lstrip('/')
