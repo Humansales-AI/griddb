@@ -81,7 +81,8 @@ class StorageServer:
             elif isinstance(p, ParsedNumber): result += str(p.value)
         return result
 
-    OWNER_OFFSET = 1_000_000  # Separate record for owner to avoid field fragmentation
+    OWNER_OFFSET = 1_000_000  # Separate record for owner
+    INDEX_OFFSET = 2_000_000  # Separate record for bucket index — O(1) listing
 
     def _get_owner(self, rid: int) -> int:
         """Read owner_id from SEPARATE record — immune to field fragmentation."""
@@ -128,7 +129,21 @@ class StorageServer:
             chunk.append(Token.RECORD)
             self.grid.write(rid + 1 + ci, chunk)
 
+        # Append to bucket index
+        self._index_add(bucket, path)
         return {'path': path, 'hash': content_hash, 'size': len(data), 'chunks': len(chunks)}
+
+    def _index_add(self, bucket: str, path: str):
+        """Add a path to the bucket's index record for O(1) listing."""
+        bucket_hash = hashlib.sha256(bucket.encode()).hexdigest()[:8]
+        idx_rid = self.INDEX_OFFSET + int(bucket_hash, 16) % 100_000
+        existing = self.grid.read(idx_rid)
+        paths = self._reconstruct(existing).split('\n') if existing and not existing.is_tombstone else []
+        if path not in paths:
+            paths.append(path)
+            self.grid.write(idx_rid, [
+                *Encoder.encode_word('\n'.join(paths)), Token.RECORD,
+            ])
 
     def download(self, bucket: str, path: str) -> Optional[bytes]:
         """Download a file. Owner check enforced."""
@@ -170,23 +185,26 @@ class StorageServer:
         return True
 
     def list_objects(self, bucket: str, prefix: str = '', limit: int = 100) -> List[dict]:
-        """List files in bucket. Shows only caller's files."""
+        """List files in bucket. O(1) via per-bucket index."""
         results = []
-        # Scan a reasonable range
-        max_rid = min(self.grid.total_entries, 12_000_000)
-        for rid in range(10_000_000, max_rid):
-            rec = self.grid.read(rid)
-            if not rec or rec.is_tombstone: continue
+        bucket_hash = hashlib.sha256(bucket.encode()).hexdigest()[:8]
+        idx_rid = self.INDEX_OFFSET + int(bucket_hash, 16) % 100_000
+        idx_rec = self.grid.read(idx_rid)
+        if not idx_rec or idx_rec.is_tombstone: return results
+        paths = self._reconstruct(idx_rec).split('\n')
+        for path in paths:
+            if not path: continue
+            if prefix and not path.startswith(prefix): continue
+            rid = self._path_rid(bucket, path)
             owner = self._get_owner(rid)
-            if owner < 0: continue  # No owner set = skip
+            if owner < 0: continue
             if self._owner_id is None or owner != self._owner_id: continue
-            text = self._reconstruct(rec)
-            nums = [p.value for p in rec.parsed if isinstance(p, ParsedNumber)]
-            if bucket in text:
-                path_str = text.split(bucket, 1)[-1].lstrip('/') if bucket in text else ''
-                results.append({'path': path_str, 'size': nums[-1] if nums else 0,
-                    'hash': hashlib.sha256(text.encode()).hexdigest()[:16], 'owner': owner})
-                if len(results) >= limit: break
+            meta = self.grid.read(rid)
+            if meta and not meta.is_tombstone:
+                nums = [p.value for p in meta.parsed if isinstance(p, ParsedNumber)]
+                results.append({'path': path, 'size': len(nums) if nums else 0,
+                    'hash': hashlib.sha256(path.encode()).hexdigest()[:16], 'owner': owner})
+            if len(results) >= limit: break
         return results
 
     def close(self): self.grid.close()
