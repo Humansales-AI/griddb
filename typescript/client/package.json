@@ -1,6 +1,6 @@
 {
   "name": "fivebit-client",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "5bit client SDK — deterministic, content-addressed database",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
