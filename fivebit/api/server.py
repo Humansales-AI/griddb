@@ -29,9 +29,24 @@ class APIHandler(BaseHTTPRequestHandler):
     grid: AllocGrid = None  # type: ignore
     spec: Dict[str, Any] = {}  # encoding spec
     _etag_cache: Dict[int, str] = {}  # record_id → ETag
+    rate_limiter = None  # Set by APIServer
 
     def log_message(self, fmt, *args):
         print(f"  [api] {args[0]}")
+
+    def _check_rate(self) -> bool:
+        """Rate limit check. Returns True if allowed."""
+        if self.rate_limiter is None:
+            return True
+        ip = self.client_address[0]
+        allowed, retry = self.rate_limiter.check(ip)
+        if not allowed:
+            self.send_response(429)
+            self.send_header('Retry-After', str(retry))
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps({'error': 'Rate limit exceeded', 'retryAfter': retry}).encode())
+        return allowed
 
     def _send(self, code: int, body: Any, etag: str = ''):
         data = json.dumps(body).encode() if not isinstance(body, bytes) else body
@@ -86,6 +101,7 @@ class APIHandler(BaseHTTPRequestHandler):
         return h
 
     def do_GET(self):
+        if not self._check_rate(): return
         parsed = urlparse(self.path)
         path = parsed.path.rstrip('/')
         params = parse_qs(parsed.query)
@@ -240,6 +256,7 @@ class APIHandler(BaseHTTPRequestHandler):
         return result
 
     def do_POST(self):
+        if not self._check_rate(): return
         if self.path == '/records':
             content_len = int(self.headers.get('Content-Length', 0))
             body = json.loads(self.rfile.read(content_len))
@@ -255,6 +272,7 @@ class APIHandler(BaseHTTPRequestHandler):
             self._send(404, {'error': 'Not found'})
 
     def do_PUT(self):
+        if not self._check_rate(): return
         parsed = urlparse(self.path)
         parts = parsed.path.rstrip('/').split('/')
         if len(parts) >= 3 and parts[1] == 'records':
@@ -284,6 +302,7 @@ class APIHandler(BaseHTTPRequestHandler):
         self._send(404, {'error': 'Not found'})
 
     def do_DELETE(self):
+        if not self._check_rate(): return
         parsed = urlparse(self.path)
         parts = parsed.path.rstrip('/').split('/')
         if len(parts) >= 3 and parts[1] == 'records':
@@ -331,6 +350,8 @@ class APIServer:
         self.port = port
         APIHandler.grid = self.grid
         APIHandler.spec = spec
+        from fivebit.api.ratelimit import APIRateLimiter
+        APIHandler.rate_limiter = APIRateLimiter()
 
     def start(self, blocking: bool = False):
         import threading
