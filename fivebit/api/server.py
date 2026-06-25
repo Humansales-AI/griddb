@@ -344,14 +344,23 @@ class APIServer:
       server.start()
     """
 
-    def __init__(self, data_dir: str, spec: Dict[str, Any], port: int = 8080, cache_size: int = 1000):
+    def __init__(self, data_dir: str, spec: Dict[str, Any], port: int = 8080, cache_size: int = 1000,
+                 realtime_server=None):
         self.grid = AllocGrid(data_dir=data_dir, cache_size=cache_size)
         self.spec = spec
         self.port = port
+        self.realtime = realtime_server
         APIHandler.grid = self.grid
         APIHandler.spec = spec
         from fivebit.api.ratelimit import APIRateLimiter
         APIHandler.rate_limiter = APIRateLimiter()
+
+    def _broadcast_change(self, table: str, event_type: str, record: dict):
+        """Notify realtime subscribers of data changes (WebSocket + WAL)."""
+        if self.realtime:
+            try:
+                self.realtime.broadcast_change(table, {'type': event_type, 'record': record})
+            except: pass
 
     def start(self, blocking: bool = False):
         import threading
