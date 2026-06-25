@@ -177,29 +177,34 @@ class WebhookManager:
                 pass
             time.sleep(BACKOFF[attempt])
 
-        # Dead-letter: store failed delivery in grid
+        # Dead-letter: store failed delivery as separate fields (prevents fragmentation)
         dlq_rid = DELIVERY_BASE
-        while self.grid.read(dlq_rid): dlq_rid += 1
-        dlq_tokens = [
-            *Encoder.encode_word(hook['url']),
-            *Encoder.encode_integer(hook['id']),
-            *Encoder.encode_word(event_type),
-            *Encoder.encode_word(payload.decode()[:500]),
-            Token.RECORD,
-        ]
-        self.grid.write(dlq_rid, dlq_tokens)
+        while self.grid.read(DELIVERY_BASE + dlq_rid * 10): dlq_rid += 1
+        base = DELIVERY_BASE + dlq_rid * 10
+        for fid, val in enumerate([hook['url'], str(hook['id']), event_type, payload.decode()[:500]]):
+            self.grid.write(base + fid, [*Encoder.encode_word(val), Token.RECORD])
 
     def dead_letter_queue(self) -> List[dict]:
         """List failed deliveries."""
         dlq = []
-        for rid in range(DELIVERY_BASE, DELIVERY_BASE + 1000):
-            rec = self.grid.read(rid)
-            if not rec or rec.is_tombstone: continue
-            words = [p.text for p in rec.parsed if isinstance(p, ParsedWord)]
-            nums = [p.value for p in rec.parsed if isinstance(p, ParsedNumber)]
-            if len(words) >= 3:
-                dlq.append({'id': rid, 'url': words[0], 'hook_id': nums[0] if nums else 0,
-                            'event': words[2], 'payload': words[3][:100]})
+        rid = 0
+        while True:
+            base = DELIVERY_BASE + rid * 10
+            rec = self.grid.read(base)
+            if not rec: break
+            if not rec.is_tombstone:
+                url = _reconstruct_all(rec)
+                hook_rec = self.grid.read(base + 1)
+                event_rec = self.grid.read(base + 2)
+                payload_rec = self.grid.read(base + 3)
+                dlq.append({
+                    'id': rid,
+                    'url': url,
+                    'hook_id': int(_reconstruct_all(hook_rec)) if hook_rec else 0,
+                    'event': _reconstruct_all(event_rec) if event_rec else '',
+                    'payload': _reconstruct_all(payload_rec)[:100] if payload_rec else '',
+                })
+            rid += 1
         return dlq
 
     def retry_dead_letter(self):
@@ -209,7 +214,10 @@ class WebhookManager:
             hook = next((h for h in hooks if h['id'] == item['hook_id']), None)
             if hook:
                 self._deliver(hook, item['event'], {'_retry': True})
-            self.grid.delete(item['id'])
+            # Delete all 4 field records
+            base = DELIVERY_BASE + item['id'] * 10
+            for fid in range(4):
+                self.grid.delete(base + fid)
 
     def start(self):
         """Background retry loop for dead-letter queue."""
