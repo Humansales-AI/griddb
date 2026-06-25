@@ -8,6 +8,9 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { Token } from './types';
+import { packToBytes } from './serialization';
+import { WALedAllocGrid } from './alloc';
+import { Token } from './types';
 import { packToBytes, unpackFromBytes } from './serialization';
 import { WALedAllocGrid } from './alloc';
 
@@ -57,34 +60,62 @@ export class ReplicationMaster {
 
 export class Replica {
   grid: WALedAllocGrid;
-  private lastSeq = -1;
+  private dataDir: string;
   syncCount = 0;
   syncErrors = 0;
 
   constructor(dataDir: string) {
+    this.dataDir = dataDir;
     this.grid = new WALedAllocGrid(dataDir);
+    // Load persisted master cursor (Bug B fix)
+    if (!this._loadCursor()) {
+      this._lastMasterSeq = -1;
+    }
   }
 
-  /** Pull and apply new entries from master. */
+  private _lastMasterSeq = -1;
+  private _cursorPath() { return path.join(this.dataDir, 'replica.cursor'); }
+
+  private _loadCursor(): boolean {
+    try {
+      const data = fs.readFileSync(this._cursorPath(), 'utf-8');
+      this._lastMasterSeq = parseInt(data.trim());
+      return true;
+    } catch { return false; }
+  }
+
+  private _saveCursor(): void {
+    fs.writeFileSync(this._cursorPath(), String(this._lastMasterSeq));
+    fs.fsyncSync(fs.openSync(this._cursorPath(), 'r+'));
+  }
+
+  /** Pull and apply new entries from master. Halts on SHA failure — no holes. */
   sync(entries: any[]): number {
     let applied = 0;
     for (const e of entries) {
-      if (e.seq <= this.lastSeq) continue;
+      if (e.seq <= this._lastMasterSeq) continue;
+
       // Verify SHA-256
-      const [packed, _] = packToBytes(e.tokens.map((t: number) => t as Token));
-      const hdr = Buffer.alloc(16);
-      hdr.writeUInt32BE(0x57414C47, 0); hdr.writeInt32BE(e.recordId, 4);
-      hdr.writeUInt32BE(e.tokens.length, 8); hdr.writeUInt32BE(e.padLen, 12);
-      // Apply
+      if (e.tokensHex) {
+        const [packed, _] = packToBytes(e.tokens.map((t: number) => t as Token));
+        const computed = crypto.createHash('sha256').update(Buffer.from(packed)).digest('hex');
+        if (computed !== e.tokensHex) {
+          this.syncErrors++;
+          console.error(`Replica: SHA mismatch at seq ${e.seq} — halting sync, cursor stays at ${this._lastMasterSeq}`);
+          return applied;  // Bug A fix: halt, don't skip
+        }
+      }
+
       this.grid.write(e.recordId, e.tokens.map((t: number) => t as Token));
-      this.lastSeq = e.seq;
+      this._lastMasterSeq = e.seq;
       applied++;
     }
+    this._saveCursor();  // Bug B fix: persist master cursor separately
     this.syncCount++;
     return applied;
   }
 
   read(recordId: number) { return this.grid.read(recordId); }
-  get lsn(): number { return this.lastSeq; }
+  get lsn(): number { return this._lastMasterSeq; }
   close(): void { this.grid.close(); }
 }
