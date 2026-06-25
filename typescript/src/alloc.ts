@@ -114,12 +114,22 @@ export class AllocGrid {
     return dataOffset;
   }
 
-  /** Compare-and-swap: write only if record hasn't changed since read. */
+  /** Compare-and-swap: atomic check-and-write with cross-process lock. */
   writeIf(recordId: number, tokens: Token[], expectedOffset: number, expectedBitLen: number): boolean {
-    const current = this._readAllocEntry(recordId);
-    if (current.byteOffset !== expectedOffset || current.bitLength !== expectedBitLen) return false;
-    this.write(recordId, tokens);
-    return true;
+    // Cross-process lock via exclusive file creation
+    const lockPath = this.allocPath + '.cas_lock';
+    let fd: number | null = null;
+    while (fd === null) {
+      try { fd = fs.openSync(lockPath, 'wx'); } catch {}
+    }
+    try {
+      const current = this._readAllocEntry(recordId);
+      if (current.byteOffset !== expectedOffset || current.bitLength !== expectedBitLen) return false;
+      this.write(recordId, tokens);
+      return true;
+    } finally {
+      try { fs.unlinkSync(lockPath); } catch {}
+    }
   }
 
   /** O(1): read record at recordId. */
