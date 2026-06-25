@@ -81,7 +81,7 @@ class AuthHandler:
             uid = self._next_user_id()
             self.grid.signup(uid, password, mode)
             # Store email in grid so login can find it
-            self.grid.base.write(80_000_000 + uid, [
+            self.grid.base.write(80_100_000 + uid, [
                 *Encoder.encode_integer(uid),
                 *Encoder.encode_word(email),
                 Token.RECORD,
@@ -123,7 +123,7 @@ class AuthHandler:
 
     def _find_user(self, email: str) -> Optional[int]:
         for uid in range(1, 10000):
-            rec = self.grid.base.read(80_000_000 + uid)
+            rec = self.grid.base.read(80_100_000 + uid)
             if not rec or rec.is_tombstone: continue
             words = [p.text for p in rec.parsed if hasattr(p, 'text')]
             stored_email = ''.join(words)
