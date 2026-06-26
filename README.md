@@ -178,7 +178,21 @@ REVOKE(user_id)   — revoke access from user
 ENCRYPT(key_id)   — mark record as encrypted with key
 ```
 
-23 reserved slots remain for future commands. These are permission *representations* in the token fabric — combine with encryption (CryptoRLS/PerUserGrid) for enforcement.
+21 reserved slots remain for future commands. CMD_LABEL (00101) tags cell positions with metadata — the data describes itself:
+
+```
+LABEL 0 "user_id"    START×4 D5 D0 END×4  START u s e r _ i d END END
+LABEL 1 "age"        START×4 D5 D1 END×4  START a g e END END
+LABEL 2 "email"      START×4 D5 D2 END×4  START e m a i l END END
+LABEL 3 "balance"    START×4 D5 D3 END×4  START b a l a n c e END END
+LABEL 4 "name"       START×4 D5 D4 END×4  START n a m e END END
+LABEL 5 "created"    START×4 D5 D5 END×4  START c r e a t e d END END
+
+DATA:  D1 END  D2 D5 END  a l i c e @ d e m o . c o m END END  D5 D0 D0 D0 END  A l i c e END END  D8 END  RECORD
+       uid=1   age=25       email="alice@demo.com"                  balance=5000          name="Alice"      created=8
+```
+
+B-tree reads labels → finds "age" at position 1 → indexes every record's position-1 value. No external schema config. These are permission *representations* in the token fabric — combine with encryption (CryptoRLS/PerUserGrid) for enforcement.
 
 ---
 
