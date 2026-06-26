@@ -192,7 +192,76 @@ DATA:  D1 END  D2 D5 END  a l i c e @ d e m o . c o m END END  D5 D0 D0 D0 END  
        uid=1   age=25       email="alice@demo.com"                  balance=5000          name="Alice"      created=8
 ```
 
-B-tree reads labels → finds "age" at position 1 → indexes every record's position-1 value. No external schema config. These are permission *representations* in the token fabric — combine with encryption (CryptoRLS/PerUserGrid) for enforcement.
+B-tree reads labels → finds "age" at position 1 → indexes every record's position-1 value. No external schema config.
+
+---
+
+## Label-Driven Architecture
+
+Labels replace schemas. The data describes itself.
+
+**Without labels** (spec-driven):
+```python
+# Server needs external config
+spec = {'fields': ['age', 'balance', 'name']}
+# B-tree indexes position 0 because spec says "age is at 0"
+```
+
+**With labels** (data-driven):
+```python
+# Labels baked into the token stream
+Encoder.encode_label(0, "age")       # cell 0 tagged "age"
+Encoder.encode_label(1, "balance")   # cell 1 tagged "balance"
+Encoder.encode_label(2, "name")      # cell 2 tagged "name"
+
+# B-tree auto-discovers: position 0 = age, position 1 = balance
+# Query ?filter=age:gt:21 — found via label lookup, no config
+```
+
+The server scans for CMD_LABEL tokens on startup, builds a field_name → position map, and auto-creates B-tree indexes. Labels travel with the data. Drop a labeled grid file on any server and it knows the schema instantly.
+
+---
+
+## Arithmetic — Signed Digits + Shunting-Yard
+
+All numbers are encoded as **signed-digit tokens**. Each digit carries its own sign. No floating-point. No IEEE 754.
+
+**Integers**: `123` → `D1 D2 D3 END`. `-123` → `N1 N2 N3 END`. `0` → `D0 END`.
+
+**Decimal scaling**: store as integer with an `S` (Scale) annotation. `12.50` → `D1 D2 D5 D0 END T_SCALE N2 END` = "1250 with 2 decimal places." Division-free — all arithmetic is integer. Rounding is explicit.
+
+**Shunting-Yard expression parser**: `3 + 4 * 2` → `D3 END D4 END D2 END * +` (postfix). The parser evaluates in O(n) with a stack. Operators: `+ - * / ( ) = ^`. The `^` is token T_POW (11010 in NUM context).
+
+```
+Expression:  (1 + 2) * 3
+Tokens:      T_LPAREN D1 END T_PLUS D2 END T_RPAREN T_MUL D3 END
+Postfix:     1 2 + 3 *
+Result:      9
+```
+
+**Geometric context**: Hamming distance compares raw token bits. Manhattan distance sums absolute differences of value vectors across records. Both are O(n) on the token stream. No index required.
+
+---
+
+## Delimiters — RECORD, END, START
+
+Three structural tokens define the fabric:
+
+| Token | Binary | Purpose |
+|:-----:|:------:|:--------|
+| `RECORD` | 11100 | Terminates a logical tuple. Everything between two RECORDs is one record. The boundary for geometric queries. |
+| `END` | 11110 | Terminates a number or word. Also pops the context stack (SPECIAL3→SPECIAL2→SPECIAL→WORD→NUM). |
+| `START` | 11111 | Pushes the context stack (NUM→WORD→SPECIAL→SPECIAL2→SPECIAL3). |
+
+**Field separation**: Numbers self-terminate with END. Words self-terminate with END. So fields are naturally separated:
+
+```
+NUM(25) END  NUM(1000) END  START A l i c e END END  RECORD
+   ↑              ↑                    ↑               ↑
+  age=25      balance=1000         name="Alice"    end of record
+```
+
+No comma, no tab, no JSON delimiter. The token stream IS the format. A parser that understands END and RECORD can parse any 5bit data without a schema.
 
 ---
 
