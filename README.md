@@ -246,6 +246,31 @@ The label is the key. The value record sits at the labeled position. No chain. N
 
 `str(NUM(0).value) = "0"` — the original digit text, not the integer 7. The token stores the digit, the parser stores the digit, the join concatenates the digits. Lossless. Labels solve field boundaries AND character preservation in the same mechanism.
 
+**Labels-first vs data-first.** Both work. Labels-first is cleaner — the reader knows what it's reading as it reads:
+
+```
+LABEL 0 "age"       ← header: position 0 = age
+LABEL 1 "balance"   ← header: position 1 = balance
+LABEL 2 "name"      ← header: position 2 = name
+══════════════      ← end of header, data starts
+D2 D5 END           ← position 0: age=25
+D5 D0 D0 D0 END     ← position 1: balance=5000
+START A l i c e END END  ← position 2: name="Alice"
+RECORD
+```
+
+Labels-first embeds the schema at the top of each record. Self-contained — any record carries its own meaning. Labels as separate grid records is more space-efficient — store the schema once, every data record references positions 0, 1, 2 from the label registry. Both paths are valid.
+
+**Label-aware Reassembly.** The reader uses labels to decide which positions to join:
+
+```python
+# Without labels:  WORD("user") NUM(4) NUM(2) → "user4" "2" (fragmented)
+# With labels:     LABEL 0 "username"  WORD("user") NUM(4) NUM(2)
+#                                        → position 0 = join → "user42"
+```
+
+`AllocGrid.reconstructByLabels(parsed)` walks the parsed tokens, finds all LABEL commands, builds a `position → name` map, then joins every token at labeled positions into a single string. Tokens at unlabeled positions are skipped. The result is `{'age': '25', 'balance': '5000', 'name': 'Alice'}`.
+
 ---
 
 ## Arithmetic — Signed Digits + Shunting-Yard
