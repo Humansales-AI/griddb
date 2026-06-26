@@ -311,9 +311,26 @@ python3 griddb_concurrency_cas.py    # Multi-process CAS
 │   ├── griddb_stress.py             Stress test harness
 │   ├── griddb_concurrency_cas.py    Multi-process CAS regression
 │   └── test_binary_grid_db.py       168 unit tests
-├── typescript/                      Full TypeScript port
-│   ├── src/                         15 core modules
-│   ├── client/                      npm package (fivebit-client)
+├── typescript/
+│   ├── src/                         Full TS port
+│   │   ├── types.ts                 32 Token enum, ParserState, ParsedToken types
+│   │   ├── tokens.ts                5-bit mappings (NUM/WORD/SPECIAL/SPECIAL2 + control)
+│   │   ├── encoder.ts               Signed-digit integers, words, expressions, records
+│   │   ├── parser.ts                FSM parser (NUM→WORD→SPECIAL→SPECIAL2→SPECIAL3)
+│   │   ├── serialization.ts         5-bit ↔ 8-bit pack/unpack
+│   │   ├── arithmetic.ts            Shunting-Yard + decimal arithmetic
+│   │   ├── geometry.ts              Hamming/Manhattan distance on token streams
+│   │   ├── checksum.ts              Modulo-32 integrity checks
+│   │   ├── grid.ts                  BinaryGrid (append-only)
+│   │   ├── alloc.ts                 AllocGrid (O(1) reads, LRU cache, compaction, WAL, groups)
+│   │   ├── positioned.ts            PositionedGrid (O(1) by stride)
+│   │   ├── indexes.ts               HashIndex + BTreeIndex
+│   │   ├── replication.ts           Master/Replica (cross-process)
+│   │   ├── transactions.ts          ACID transactions (lock-spanned, DIRTY recovery)
+│   │   ├── changestream.ts          SSE + long-poll event stream
+│   │   ├── server.ts                Standalone REST API server (no Python needed)
+│   │   └── fivebit/                 Optional libs (auth, RLS, crypto, per_user, tenant, cache, commands)
+│   ├── client/                      npm package (fivebit-client@0.2.2)
 │   └── tests/                       48 Jest + 5 correctness + conformance
 ├── fivebit/                         Optional libraries (zero core changes)
 │   ├── auth/                        PBKDF2 + sessions + MultiMode (zero/managed)
