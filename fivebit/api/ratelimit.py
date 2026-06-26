@@ -41,11 +41,14 @@ class RateLimiter:
         with self.lock:
             bucket = self.buckets[key]
             bucket[:] = [t for t in bucket if now - t < self.window]
-            if not bucket:
-                del self.buckets[key]  # Fix #1: prevent unbounded dict growth
             if len(bucket) >= self.max:
                 return False
             bucket.append(now)
+            # Periodic cleanup: sweep empty buckets every 1000 calls
+            self._call_count = getattr(self, '_call_count', 0) + 1
+            if self._call_count % 1000 == 0:
+                empty = [k for k, v in self.buckets.items() if not v]
+                for k in empty: del self.buckets[k]
             return True
 
     def retry_after(self, key: str) -> int:
