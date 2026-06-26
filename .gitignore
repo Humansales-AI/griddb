@@ -7,3 +7,4 @@ dist/
 .env.local
 griddb-v4.grid
 !dist/griddb-v4.grid
+typescript/client/data/
