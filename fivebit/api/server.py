@@ -330,6 +330,7 @@ class APIHandler(BaseHTTPRequestHandler):
             self.grid.write(rid, tokens)
             rec = self.grid.read(rid)
             if rec:
+                APIHandler._notify_change(self.spec.get('name', 'records'), 'insert', self._record_to_json(rec))
                 self._send(201, self._record_to_json(rec), self._record_hash(rec))
             else:
                 self._send(500, {'error': 'Write failed'})
@@ -358,6 +359,7 @@ class APIHandler(BaseHTTPRequestHandler):
                 self.grid.write(rid, tokens)
                 rec = self.grid.read(rid)
                 if rec:
+                    APIHandler._notify_change(self.spec.get('name', 'records'), 'update', self._record_to_json(rec))
                     self._send(200, self._record_to_json(rec), self._record_hash(rec))
                 else:
                     self._send(500, {'error': 'Update failed'})
@@ -375,6 +377,7 @@ class APIHandler(BaseHTTPRequestHandler):
                 rid = int(parts[2])
                 self._etag_cache.pop(rid, None)
                 self.grid.delete(rid)
+                APIHandler._notify_change(self.spec.get('name', 'records'), 'delete', {'_id': rid})
                 self._send(200, {'deleted': rid})
                 return
             except ValueError:
@@ -419,6 +422,7 @@ class APIServer:
         APIHandler.spec = spec
         from fivebit.api.ratelimit import APIRateLimiter
         APIHandler.rate_limiter = APIRateLimiter()
+        APIHandler._server_instance = self  # Wire realtime broadcast
         # B-tree indexes — one per numeric field in spec
         self._indexes = {}
         for f in spec.get('fields', []):
@@ -429,7 +433,6 @@ class APIServer:
 
     def _broadcast_change(self, table: str, event_type: str, record: dict):
         """Notify realtime subscribers + update B-tree indexes."""
-        # Update indexes
         rid = record.get('_id', 0)
         for field, idx_obj in getattr(self, '_indexes', {}).items():
             val = record.get(field)
@@ -440,6 +443,14 @@ class APIServer:
             try:
                 self.realtime.broadcast_change(table, {'type': event_type, 'record': record})
             except: pass
+
+    @classmethod
+    def _notify_change(cls, table: str, event_type: str, record: dict):
+        """Hook called by APIHandler after successful write."""
+        if cls._server_instance:
+            cls._server_instance._broadcast_change(table, event_type, record)
+
+    _server_instance = None  # Set by APIServer.__init__
 
     def start(self, blocking: bool = False):
         import threading
