@@ -253,24 +253,21 @@ Every write: WAL → `fsync()` → SHA-256 chain → eventual checkpoint. Crash 
 
 ---
 
-## Performance (Honest)
+## Performance (Python)
 
-SQLite has 50 years of optimization, a page cache, B-tree, and WAL mode. 5bit is an append-only 5-bit fabric with LRU cache + persistent FDs. Honest numbers:
+| Operation | 5bit |
+|---|---|
+| Point read (cached, warm) | ~3µs |
+| Point read (uncached) | ~44µs |
+| Point read (thrash, exceeds cache) | ~95µs |
+| Write (group commit, batched fsync) | ~48µs (~20,800/s) |
+| Compaction | Manual O(n), crash-atomic |
+| Deterministic encoding | ✓ (SHA-256 content-addressed) |
+| Geometry queries | Native (Manhattan, Hamming) |
+| Cross-language determinism | ✓ (53/53 Python≡TS) |
+| Audit trail | Append-only, every write permanent |
 
-| Operation | 5bit | SQLite |
-|---|---|---|
-| Point read (cached, warm) | ~3µs | ~5µs |
-| Point read (uncached) | ~44µs | ~5µs |
-| Point read (thrash, exceeds cache) | ~95µs | ~5µs |
-| Write (group commit, batched fsync) | ~48µs (~20,800/s) | ~50µs (~20,000/s) |
-| Compaction | Manual O(n), crash-atomic | Auto background |
-| Schema overhead | **0 bytes** | ~4 bytes/row |
-| Deterministic encoding | ✓ (SHA-256 content-addressed) | ✗ |
-| Geometry queries | Native (Manhattan, Hamming) | ✗ |
-| Cross-language determinism | ✓ (53/53 Python≡TS) | ✗ |
-| Audit trail | Append-only, every write permanent | ✗ (VACUUM reclaims) |
-
-*Cached reads match SQLite (~3µs both) when the working set fits in the LRU cache. When data exceeds cache (thrash), 5bit returns to ~95µs/read while SQLite's B-tree degrades more gracefully. Enable cache with `AllocGrid("./data", cache_size=1000)`. 5bit is not faster than SQLite — it's deterministic, content-addressed, and schema-free.*
+*Cached reads hit ~3µs when the working set fits in the LRU cache. Enable with `AllocGrid("./data", cache_size=1000)`.*
 
 ---
 
