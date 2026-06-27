@@ -261,6 +261,17 @@ RECORD
 
 Labels-first embeds the schema at the top of each record. Self-contained — any record carries its own meaning. Labels as separate grid records is more space-efficient — store the schema once, every data record references positions 0, 1, 2 from the label registry. Both paths are valid.
 
+**Why NUM separates adjacent word fields.** `reassemble()` walks parsed tokens looking for consecutive WORDs. When it hits a NUM, it emits the accumulated word, keeps the NUM, and starts fresh:
+
+```
+Parsed:  WORD('ACME')  NUM(0)  WORD('CORP')
+                                ↑
+                  NUM stops the merge here.
+                  "ACME" emitted. NUM kept. "CORP" starts new word.
+```
+
+Without the NUM, consecutive WORDs merge into `"ACMECORP"`. With it, they stay `"ACME"` and `"CORP"`. The value `0` is irrelevant — any NUM works. It just needs to be a `ParsedNumber`, not a `ParsedWord`.
+
 **Label-aware Reassembly.** The reader uses labels to decide which positions to join:
 
 ```python
