@@ -342,11 +342,14 @@ class AllocGrid:
         for p in parsed:
             if isinstance(p, dict) and p.get('cmd') == 'LABEL':
                 in_label = True; continue
-            if in_label and isinstance(p, ParsedNumber):
-                label_pos = p.value; continue
             if in_label and isinstance(p, ParsedWord):
-                if p.text: labels[label_pos] = p.text; in_label = False  # skip empty artifacts
+                if p.text: labels[f'_pending_{data_pos}'] = p.text  # name before position
                 continue
+            if in_label and isinstance(p, ParsedNumber):
+                # Position NUM after label name — reassign pending label to actual position
+                pending = labels.pop(f'_pending_{data_pos}', '')
+                if pending: labels[p.value] = pending
+                in_label = False; continue
             if hasattr(p, 'type') and p.type == 'control':
                 if p.token == Token.END and values.get(data_pos):
                     data_pos += 1

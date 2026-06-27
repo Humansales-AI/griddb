@@ -457,17 +457,16 @@ class Encoder:
 
     @staticmethod
     def encode_label(position: int, label: str) -> List[Token]:
-        """Encode a SPECIAL3 LABEL command. Tags a cell position with metadata.
-        Position must be encoded OUTSIDE SPECIAL3 context (D0 in SPECIAL3 = CMD_AUTH, not digit 0).
-        """
+        """Encode a SPECIAL3 LABEL command. Position NUM at value boundary so
+        reassemble() doesn't merge label name into the first data value."""
         return [
             Token.START, Token.START, Token.START, Token.START,  # enter SPECIAL3
             CMD_LABEL,                                             # the LABEL command
             Token.END, Token.END, Token.END, Token.END,            # pop SPECIAL3→SPECIAL2→SPECIAL→WORD
             Token.END,                                             # pop WORD→NUM
-            *Encoder.encode_integer(position),                     # position in NUM context ✓
-            *Encoder.encode_word(label),                           # label text (has its own START)
+            *Encoder.encode_word(label),                           # label name (has its own START)
             Token.END,                                             # WORD→NUM
+            *Encoder.encode_integer(position),                     # position NUM at value boundary
         ]
 
 

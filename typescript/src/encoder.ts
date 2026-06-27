@@ -151,9 +151,9 @@ export class Encoder {
       CMD_LABEL,                                             // the LABEL command
       Token.END, Token.END, Token.END, Token.END,            // pop SPECIAL3→SPECIAL2→SPECIAL→WORD
       Token.END,                                             // pop WORD→NUM
-      ...Encoder.encodeInteger(position),                    // position in NUM context ✓
-      ...Encoder.encodeWord(label),                          // label text (has its own START)
+      ...Encoder.encodeWord(label),                          // label name first
       Token.END,                                             // WORD→NUM
+      ...Encoder.encodeInteger(position),                    // position NUM at value boundary
     ];
   }
 }

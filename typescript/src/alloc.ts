@@ -271,13 +271,15 @@ export class AllocGrid {
       if ((p as any).type === 'command' && (p as any).cmd === 'LABEL') {
         inLabel = true; continue;
       }
-      if (inLabel && p.type === 'number') {
-        labelPos = (p as any).value; continue;
-      }
       if (inLabel && p.type === 'word') {
         const text = (p as any).text;
-        if (text) { labels[labelPos] = text; inLabel = false; }  // skip empty WORD artifacts
+        if (text) { labels[`_p_${dataPos}`] = text; }  // name before position
         continue;
+      }
+      if (inLabel && p.type === 'number') {
+        const pending = labels[`_p_${dataPos}`];
+        if (pending) { labels[(p as any).value] = pending; delete labels[`_p_${dataPos}`]; }
+        inLabel = false; continue;
       }
       if (p.type === 'control') {
         // END terminates current value field
