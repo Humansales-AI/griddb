@@ -275,8 +275,9 @@ export class AllocGrid {
         labelPos = (p as any).value; continue;
       }
       if (inLabel && p.type === 'word') {
-        labels[labelPos] = (p as any).text;
-        inLabel = false; continue;
+        const text = (p as any).text;
+        if (text) { labels[labelPos] = text; inLabel = false; }  // skip empty WORD artifacts
+        continue;
       }
       if (p.type === 'control') {
         // END terminates current value field

@@ -345,7 +345,8 @@ class AllocGrid:
             if in_label and isinstance(p, ParsedNumber):
                 label_pos = p.value; continue
             if in_label and isinstance(p, ParsedWord):
-                labels[label_pos] = p.text; in_label = False; continue
+                if p.text: labels[label_pos] = p.text; in_label = False  # skip empty artifacts
+                continue
             if hasattr(p, 'type') and p.type == 'control':
                 if p.token == Token.END and values.get(data_pos):
                     data_pos += 1
