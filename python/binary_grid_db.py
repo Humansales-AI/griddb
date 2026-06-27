@@ -466,8 +466,7 @@ class Encoder:
             Token.END, Token.END, Token.END, Token.END,            # pop SPECIAL3→SPECIAL2→SPECIAL→WORD
             Token.END,                                             # pop WORD→NUM
             *Encoder.encode_integer(position),                     # position in NUM context ✓
-            Token.START,                                           # re-enter WORD
-            *Encoder.encode_word(label),                           # label text
+            *Encoder.encode_word(label),                           # label text (has its own START)
             Token.END,                                             # WORD→NUM
         ]
 

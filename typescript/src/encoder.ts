@@ -152,8 +152,7 @@ export class Encoder {
       Token.END, Token.END, Token.END, Token.END,            // pop SPECIAL3→SPECIAL2→SPECIAL→WORD
       Token.END,                                             // pop WORD→NUM
       ...Encoder.encodeInteger(position),                    // position in NUM context ✓
-      Token.START,                                           // re-enter WORD
-      ...Encoder.encodeWord(label),                          // label text
+      ...Encoder.encodeWord(label),                          // label text (has its own START)
       Token.END,                                             // WORD→NUM
     ];
   }
