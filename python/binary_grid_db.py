@@ -458,14 +458,16 @@ class Encoder:
     @staticmethod
     def encode_label(position: int, label: str) -> List[Token]:
         """Encode a SPECIAL3 LABEL command. Tags a cell position with metadata.
-        Example: label(3, "user_id") → cell 3 is tagged "user_id"
+        Position must be encoded OUTSIDE SPECIAL3 context (D0 in SPECIAL3 = CMD_AUTH, not digit 0).
         """
         return [
-            Token.START, Token.START, Token.START, Token.START,  # NUM→WORD→SPECIAL→SPECIAL2→SPECIAL3
+            Token.START, Token.START, Token.START, Token.START,  # enter SPECIAL3
             CMD_LABEL,                                             # the LABEL command
-            *Encoder.encode_integer(position),                     # cell position
-            Token.END, Token.END, Token.END, Token.END,            # pop SPECIAL3→...→WORD
-            *Encoder.encode_word(label),                           # the label text
+            Token.END, Token.END, Token.END, Token.END,            # pop SPECIAL3→SPECIAL2→SPECIAL→WORD
+            Token.END,                                             # pop WORD→NUM
+            *Encoder.encode_integer(position),                     # position in NUM context ✓
+            Token.START,                                           # re-enter WORD
+            *Encoder.encode_word(label),                           # label text
             Token.END,                                             # WORD→NUM
         ]
 

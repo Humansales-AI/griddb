@@ -143,15 +143,17 @@ export class Encoder {
     return tokens;
   }
 
-  /** Label a cell position with metadata text. SPECIAL3 command. */
+  /** Label a cell position with metadata text. Position in NUM context. */
   static encodeLabel(position: number, label: string): Token[] {
     const CMD_LABEL = Token.D5;
     return [
-      Token.START, Token.START, Token.START, Token.START,  // NUM→WORD→SPECIAL→SPECIAL2→SPECIAL3
-      CMD_LABEL,
-      ...Encoder.encodeInteger(position),
+      Token.START, Token.START, Token.START, Token.START,  // enter SPECIAL3
+      CMD_LABEL,                                             // the LABEL command
       Token.END, Token.END, Token.END, Token.END,            // pop SPECIAL3→SPECIAL2→SPECIAL→WORD
-      ...Encoder.encodeWord(label),
+      Token.END,                                             // pop WORD→NUM
+      ...Encoder.encodeInteger(position),                    // position in NUM context ✓
+      Token.START,                                           // re-enter WORD
+      ...Encoder.encodeWord(label),                          // label text
       Token.END,                                             // WORD→NUM
     ];
   }
