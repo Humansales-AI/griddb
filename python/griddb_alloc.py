@@ -347,20 +347,20 @@ class AllocGrid:
                 continue
             if in_label and isinstance(p, ParsedNumber):
                 pending = labels.pop(f'_pending', '')
-                if pending: labels[p.value] = pending  # explicit position from label
+                if pending:
+                    data_pos = p.value  # label's position → data bucket
+                    labels[data_pos] = pending
+                    if data_pos not in values: values[data_pos] = []
                 in_label = False; continue
             if hasattr(p, 'type') and p.type == 'control':
                 continue
 
-            # Data tokens — sequential position after labels
+            # Data tokens — all belong to current data_pos (set by last LABEL)
             if data_pos not in values: values[data_pos] = []
             if isinstance(p, ParsedNumber):
                 values[data_pos].append(str(p.value))
             elif isinstance(p, ParsedWord):
                 values[data_pos].append(p.text)
-            # Advance position on NUM tokens (each value field starts with a number)
-            if isinstance(p, ParsedNumber):
-                data_pos += 1
 
         result = {}
         for pos, name in labels.items():

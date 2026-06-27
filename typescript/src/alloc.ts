@@ -278,18 +278,18 @@ export class AllocGrid {
       }
       if (inLabel && p.type === 'number') {
         const pending = labels['_pending'];
-        if (pending) { labels[(p as any).value] = pending; delete labels['_pending']; }
+        if (pending) {
+          dataPos = (p as any).value;  // label's position → data bucket
+          labels[dataPos] = pending; delete labels['_pending'];
+          if (!values[dataPos]) values[dataPos] = [];
+        }
         inLabel = false; continue;
       }
       if (p.type === 'control') continue;
 
       if (!values[dataPos]) values[dataPos] = [];
-      if (p.type === 'number') {
-        values[dataPos].push(String((p as any).value));
-        dataPos++;  // advance on NUM — each value starts with a number
-      } else if (p.type === 'word') {
-        values[dataPos].push((p as any).text);
-      }
+      if (p.type === 'number') values[dataPos].push(String((p as any).value));
+      else if (p.type === 'word') values[dataPos].push((p as any).text);
     }
 
     const result: Record<string, string> = {};
