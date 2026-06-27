@@ -259,7 +259,7 @@ START A l i c e END END  ← position 2: name="Alice"
 RECORD
 ```
 
-Labels-first embeds the schema at the top of each record. Self-contained — any record carries its own meaning. Labels as separate grid records is more space-efficient — store the schema once, every data record references positions 0, 1, 2 from the label registry. Both paths are valid.
+Labels and data are interleaved — each label is immediately followed by its value. Self-contained per record. Labels as separate grid records is more space-efficient — store the schema once, every data record references positions from the label registry.
 
 **Why NUM separates adjacent word fields.** `reassemble()` walks parsed tokens looking for consecutive WORDs. When it hits a NUM, it emits the accumulated word, keeps the NUM, and starts fresh:
 

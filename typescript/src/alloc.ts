@@ -259,27 +259,25 @@ export class AllocGrid {
     fs.closeSync(fd);
   }
 
-  /** Label-driven reconstruction: join tokens at labeled positions into named fields. */
+  /** Label-driven reconstruction: interleaved layout (LABEL + value + LABEL + value). */
   static reconstructByLabels(parsed: ParsedToken[]): Record<string, string> {
-    const labels: Record<number, string> = {};  // position → label name
-    const values: Record<number, string[]> = {}; // position → token texts
-    let inLabel = false; let labelPos = 0;
-    let dataPos = 0;  // sequential position counter for data tokens
+    const labels: Record<number, string> = {};
+    const values: Record<number, string[]> = {};
+    let inLabel = false; let dataPos = 0;
 
     for (const p of parsed) {
-      // Label header detection
       if ((p as any).type === 'command' && (p as any).cmd === 'LABEL') {
         inLabel = true; continue;
       }
       if (inLabel && p.type === 'word') {
         const text = (p as any).text;
-        if (text) { labels['_pending'] = text; }  // name before position
+        if (text) labels['_pending'] = text;
         continue;
       }
       if (inLabel && p.type === 'number') {
         const pending = labels['_pending'];
         if (pending) {
-          dataPos = (p as any).value;  // label's position → data bucket
+          dataPos = (p as any).value;
           labels[dataPos] = pending; delete labels['_pending'];
           if (!values[dataPos]) values[dataPos] = [];
         }

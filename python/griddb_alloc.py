@@ -334,28 +334,28 @@ class AllocGrid:
 
     @staticmethod
     def reconstruct_by_labels(parsed: list) -> dict:
-        """Label-driven reconstruction: join tokens at labeled positions into named fields."""
+        """Label-driven reconstruction: join tokens at labeled positions into named fields.
+        Supports interleaved layout: LABEL + value + LABEL + value + ..."""
         labels = {}   # position → label name
         values = {}   # position → token texts
-        in_label = False; label_pos = 0; data_pos = 0
+        in_label = False; data_pos = 0
 
         for p in parsed:
             if isinstance(p, dict) and p.get('cmd') == 'LABEL':
                 in_label = True; continue
             if in_label and isinstance(p, ParsedWord):
-                if p.text: labels[f'_pending'] = p.text  # name before position
+                if p.text: labels[f'_pending'] = p.text
                 continue
             if in_label and isinstance(p, ParsedNumber):
                 pending = labels.pop(f'_pending', '')
                 if pending:
-                    data_pos = p.value  # label's position → data bucket
+                    data_pos = p.value
                     labels[data_pos] = pending
                     if data_pos not in values: values[data_pos] = []
                 in_label = False; continue
             if hasattr(p, 'type') and p.type == 'control':
                 continue
 
-            # Data tokens — all belong to current data_pos (set by last LABEL)
             if data_pos not in values: values[data_pos] = []
             if isinstance(p, ParsedNumber):
                 values[data_pos].append(str(p.value))
