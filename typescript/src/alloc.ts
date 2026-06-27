@@ -269,24 +269,27 @@ export class AllocGrid {
     for (const p of parsed) {
       // Label header detection
       if ((p as any).type === 'command' && (p as any).cmd === 'LABEL') {
-        dataPos++; inLabel = true; continue;  // New label = new field position
+        inLabel = true; continue;
       }
       if (inLabel && p.type === 'word') {
         const text = (p as any).text;
-        if (text) { labels[`_p_${dataPos}`] = text; }  // name before position
+        if (text) { labels['_pending'] = text; }  // name before position
         continue;
       }
       if (inLabel && p.type === 'number') {
-        const pending = labels[`_p_${dataPos}`];
-        if (pending) { labels[(p as any).value] = pending; delete labels[`_p_${dataPos}`]; }
+        const pending = labels['_pending'];
+        if (pending) { labels[(p as any).value] = pending; delete labels['_pending']; }
         inLabel = false; continue;
       }
-      if (p.type === 'control') continue;  // Skip — position advances on LABEL
+      if (p.type === 'control') continue;
 
-      // Data tokens — assign by sequential position
       if (!values[dataPos]) values[dataPos] = [];
-      if (p.type === 'number') values[dataPos].push(String((p as any).value));
-      else if (p.type === 'word') values[dataPos].push((p as any).text);
+      if (p.type === 'number') {
+        values[dataPos].push(String((p as any).value));
+        dataPos++;  // advance on NUM — each value starts with a number
+      } else if (p.type === 'word') {
+        values[dataPos].push((p as any).text);
+      }
     }
 
     const result: Record<string, string> = {};
