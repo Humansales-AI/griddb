@@ -425,10 +425,43 @@ python3 griddb_concurrency_cas.py    # Multi-process CAS
 
 ---
 
+## C Engine — Ground Truth
+
+The C implementation is the canonical reference. If Python and TypeScript disagree on a packed byte, the C engine settles it. All three produce identical output.
+
+```
+c/
+├── fivebit_codec.c     Full encode+decode (byte-identical to Python)
+├── fivebit_encode.c    Encoder only
+├── fivebit_write.c     Write operations
+├── fivebit_lib.c       Shared library (ctypes / ffi-napi bindable)
+└── Makefile            make all
+```
+
+```bash
+cd c && make all
+
+# Python binding
+python3 -c "import ctypes; lib = ctypes.CDLL('./libfivebit.so')"
+
+# TypeScript binding
+npm install ffi-napi
+# const lib = ffi.Library('./libfivebit', { ... })
+```
+
+Same binary. Three languages. Same bytes every time.
+
+---
+
 ## Project Structure
 
 ```
 5bit/
+├── c/                              C engine (ground truth)
+│   ├── fivebit_codec.c              Full encode+decode
+│   ├── fivebit_encode.c             Encoder
+│   ├── fivebit_lib.c                Shared library (ctypes/ffi)
+│   └── fivebit_write.c              Write ops
 ├── python/                          Core engine
 │   ├── binary_grid_db.py            Tokens, encoder, parser, 5 contexts
 │   ├── griddb_alloc.py              AllocGrid (O(1) reads, LRU cache, compaction)
